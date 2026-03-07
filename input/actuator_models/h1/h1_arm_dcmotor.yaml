@@ -1,0 +1,23 @@
+# Real H1 arm motor parameters (M8010-6.333)
+#
+# These values are used by DCMotorCfg in Isaac Lab to model the H1's arm actuators.
+# Source: Unitree motor datasheet + system identification.
+
+# Motor electrical parameters
+torque_constant_Kt: 1.89        # N-m/A
+peak_current_Ipeak: 100.0       # A
+
+# Torque limits (derived: Kt * Ipeak)
+saturation_effort: 25.0        # N-m
+effort_limit: 25.0             # N-m
+
+# Velocity limit
+velocity_limit: 13.5            # rad/s
+
+# Mechanical parameters
+armature: 0.011                 # kg-m^2 (rotor inertia J)
+friction: 0.20                  # Coulomb friction coefficient
+
+# PD gains
+stiffness: 60.0                 # kp
+damping: 1.5                    # kd

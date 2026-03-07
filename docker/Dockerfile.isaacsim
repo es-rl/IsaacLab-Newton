@@ -1,0 +1,82 @@
+# Dockerfile for building Isaac Sim 6.0.0 from source
+# Isaac Sim 6.0 is not yet available on NGC, so it must be built from the GitHub repo.
+# Reference: https://github.com/isaac-sim/IsaacSim
+# Reference: https://github.com/NVIDIA-Omniverse/IsaacSim-dockerfiles
+#
+# Usage:
+#   cd docker
+#   docker compose --env-file .env.base --profile isaacsim build
+#
+# This produces the image used as the base for Dockerfile.base.
+
+ARG CUDA_VERSION_ARG=12.6.3
+ARG UBUNTU_VERSION_ARG=22.04
+FROM nvidia/cuda:${CUDA_VERSION_ARG}-devel-ubuntu${UBUNTU_VERSION_ARG} AS isaacsim
+
+SHELL ["/bin/bash", "-c"]
+
+ENV LANG=C.UTF-8
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Isaac Sim version/commit to build
+ARG ISAACSIM_VERSION_ARG=6.0.0
+ARG ISAACSIM_GIT_REF_ARG=main
+ENV ISAACSIM_VERSION=${ISAACSIM_VERSION_ARG}
+
+# Where Isaac Sim will be installed
+ARG ISAACSIM_ROOT_PATH_ARG=/isaac-sim
+ENV ISAACSIM_ROOT_PATH=${ISAACSIM_ROOT_PATH_ARG}
+
+USER root
+
+# System dependencies for building Isaac Sim
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    cmake \
+    curl \
+    git \
+    git-lfs \
+    libffi-dev \
+    libglib2.0-0 \
+    libgl1-mesa-glx \
+    libsm6 \
+    libxext6 \
+    libxrender1 \
+    ncurses-term \
+    python3 \
+    python3-pip \
+    python3-venv \
+    software-properties-common \
+    unzip \
+    wget && \
+    apt-get -y autoremove && apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install git-lfs
+RUN git lfs install
+
+# Clone Isaac Sim from source
+RUN git clone --branch ${ISAACSIM_GIT_REF_ARG} --depth 1 \
+    https://github.com/isaac-sim/IsaacSim.git /tmp/IsaacSim
+
+# Build Isaac Sim
+# The build process follows the Isaac Sim GitHub repo instructions.
+# Adjust the build commands below if the upstream build process changes.
+WORKDIR /tmp/IsaacSim
+
+# Accept EULA before build (build.sh checks for .eula_accepted file)
+RUN touch .eula_accepted
+
+# Pull LFS objects needed for the build
+RUN git lfs pull
+
+RUN ./build.sh --release
+
+# Install Isaac Sim to the target path
+RUN mkdir -p ${ISAACSIM_ROOT_PATH} && \
+    cp -rL _build/linux-x86_64/release/* ${ISAACSIM_ROOT_PATH}/
+
+# Clean up build artifacts to reduce image size
+RUN rm -rf /tmp/IsaacSim
+
+WORKDIR ${ISAACSIM_ROOT_PATH}

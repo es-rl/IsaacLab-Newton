@@ -1,0 +1,45 @@
+# UR10e arm system identification parameter bounds
+# 6 joint types (no left/right mirroring): shoulder_pan, shoulder_lift, elbow, wrist_1, wrist_2, wrist_3
+#
+# CMA-ES optimizes these in normalized [-1, 1] space with linear mapping to bounds.
+# Move stiffness/damping from "fixed" to "parameters" to include them in optimization.
+
+mirror: false
+
+joint_types:
+  - shoulder_pan
+  - shoulder_lift
+  - elbow
+  - wrist_1
+  - wrist_2
+  - wrist_3
+
+parameters:
+  armature:
+    lower: 0.0
+    upper: 0.5
+  dynamic_friction:
+    lower: 0.0
+    upper: 5.0
+  viscous_friction:
+    lower: 0.0
+    upper: 5.0
+  # Uncomment to also optimize PD gains per joint:
+  stiffness:
+    lower: 100.0
+    upper: 2000.0
+  damping:
+    lower: 5.0
+    upper: 100.0
+
+# Fixed parameters (not optimized, written to best_params.yaml for reference)
+fixed:
+  # stiffness: 800.0      # kp (used when stiffness is not in parameters above)
+  # damping: 40.0          # kd (used when damping is not in parameters above)
+  motor_lag_ms: 0.0      # no command delay for UR10e
+
+# CMA-ES defaults (can be overridden via CLI)
+cmaes:
+  sigma: 0.5
+  max_iterations: 200
+  epsilon: 0.01

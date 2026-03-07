@@ -2,7 +2,7 @@
 
 ---
 
-# Isaac Lab
+# Isaac Lab (with Newton SysID toolbox)
 
 [![IsaacSim](https://img.shields.io/badge/IsaacSim-6.0.0-silver.svg)](https://docs.isaacsim.omniverse.nvidia.com/latest/index.html)
 [![Python](https://img.shields.io/badge/python-3.12-blue.svg)](https://docs.python.org/3/whatsnew/3.12.html)
@@ -34,6 +34,16 @@ Moreover, Isaac Lab can run locally or be distributed across the cloud, offering
 
 A detailed description of Isaac Lab can be found in our [arXiv paper](https://arxiv.org/abs/2511.04831).
 
+## Version Info
+
+| Component | Version |
+|---|---|
+| Isaac Lab | 3.0.0 |
+| Isaac Sim | 6.0.0 |
+| Newton | [release-1.0](https://github.com/newton-physics/newton/tree/release-1.0) |
+| MuJoCo | >= 3.5.0 |
+| MuJoCo Warp | >= 3.5.0 |
+
 ## Key Features
 
 Isaac Lab offers a comprehensive set of tools and environments designed to facilitate robot learning:
@@ -43,6 +53,107 @@ Isaac Lab offers a comprehensive set of tools and environments designed to facil
 - **Physics**: Rigid bodies, articulated systems, deformable objects
 - **Sensors**: RGB/depth/segmentation cameras, camera annotations, IMU, contact sensors, ray casters.
 
+## System Identification & Sim2Real Gap Estimation
+
+This repo includes scripts for **system identification (sysid)** and **sim-to-real actuator gap estimation**, targeting the Newton physics backend with the MuJoCo Warp solver.
+
+### SysID (`scripts/sysid/`)
+
+CMA-ES optimization of robot actuator parameters (armature, friction, viscous damping, PD gains). Replays real robot data in N parallel sim environments and minimizes position MSE vs measured response.
+
+- **Supported robots**: H1 (mirrored left/right arms), UR10e
+- **Input modes**: Single-joint parquet chirp files, multi-joint CSVs (control.csv + state_motor.csv), raw motor CSVs (auto-converted)
+- **GRU model training**: Standard GRU (full torque) and hybrid residual GRU (learns what PD model can't explain), with Optuna hyperparameter search
+
+See [`scripts/sysid/README.md`](scripts/sysid/README.md) for full documentation. Based on: [PACE Sim2Real](https://github.com/leggedrobotics/pace-sim2real) (ETH Zurich)
+
+
+### Sim2Real Gap Estimation (`scripts/sim2real_gap/`)
+
+Sim-to-real actuator gap estimation with the Newton physics backend. Two-stage workflow: **benchmark** replays joint motion trajectories in Newton simulation and records sim joint states; **analysis** compares sim vs real data to quantify the actuator gap. 
+
+- **Benchmark**: Runs motions through multiple actuator models (implicit PD, DC motor, LSTM/GRU) and outputs sim joint states
+- **Analysis**: Per-joint RMSE, correlation, cosine similarity plots and metrics comparing sim vs real
+- **Auto-conversion**: Motor CSVs from sysid experiments are auto-converted to the expected format
+
+See [`scripts/sim2real_gap/README.md`](scripts/sim2real_gap/README.md) for full documentation. Based on: [SAGE](https://github.com/isaac-sim2real/sage)
+
+
+### Prerequisites
+
+This repo uses **Git LFS** for large binary assets (USD robot models, trained `.pt` models, mesh files). Install and pull LFS objects before building:
+
+```bash
+# Install Git LFS (if not already installed)
+sudo apt install git-lfs   # Ubuntu/Debian
+git lfs install
+
+# Pull LFS objects (required after cloning)
+git lfs pull
+```
+
+Without `git lfs pull`, robot model files in `input/robot_models/` will be LFS pointer files instead of actual data, causing runtime errors.
+
+### Quick Start
+
+```bash
+# Build all Docker images (only needed once, each step builds on the previous)
+./docker/build-docker.sh
+
+# Or build a specific target (automatically builds dependencies)
+./docker/build-docker.sh sysid              # isaacsim → base → sysid
+./docker/build-docker.sh base               # isaacsim → base
+./docker/build-docker.sh sysid --no-cache   # rebuild sysid only (keeps cached deps)
+./docker/build-docker.sh --no-cache         # rebuild everything from scratch
+
+# Launch an interactive shell (with GUI/X11 forwarding)
+./docker/run-gui.sh
+
+# Headless mode (no X11)
+./docker/run-headless.sh python scripts/sysid/run_sysid.py --robot-name h1 --headless
+
+# Key commands to run inside Docker container
+# NOTE: modify the config yaml in input/run_configs for each robot
+python scripts/sysid/run_sysid.py --robot-name h1 --headless
+python scripts/sim2real_gap/run_benchmark.py --robot-name h1 --headless
+python scripts/sim2real_gap/run_analysis.py --robot-name h1
+```
+
+The `run-gui.sh` script sets up X11 forwarding for GUI apps and reuses an existing container across invocations.
+
+### Directory Structure
+
+```
+input/                           # Data and configs (bind-mounted in Docker)
+├── actuator_models/             # Actuator parameter YAMLs and trained .pt models
+│   ├── h1/                      # H1 implicit, dcmotor, GRU/LSTM models
+│   └── ur10e/                   # UR10e implicit actuator params
+├── run_configs/                 # Per-robot runtime configs (simulation, sysid, benchmark)
+│   ├── h1/h1.yaml
+│   └── ur10e/ur10e.yaml
+├── robot_models/                # USD/URDF robot assets
+└── motion_files/                # Motion trajectory files (e.g. sysid data)
+
+scripts/
+├── sysid/                       # System identification scripts
+│   ├── run_sysid.py             # CMA-ES optimizer driver
+│   ├── optimizer.py             # CMA-ES wrapper
+│   ├── convert_h1_chirp_to_csv.py
+│   ├── convert_pkl_to_csv.py
+│   ├── convert_ur10_urdf.py
+│   ├── diagnose_newton_mapping.py
+│   └── train_model/             # GRU/hybrid model training
+│       ├── gru_model_train.py
+│       └── hybrid_model_train.py
+└── sim2real_gap/                # Sim2real gap benchmark & analysis
+    ├── run_benchmark.py         # Newton sim playback
+    ├── run_analysis.py          # Sim vs real comparison
+    ├── newton_benchmark.py      # Core benchmark implementation
+    ├── convert_real_data.py
+    ├── convert_ur10e_pkl.py
+    ├── generate_sample_motion.py
+    └── configs/                 # Joint configs for sim2real gap
+```
 
 ## Getting Started
 
@@ -56,51 +167,6 @@ detailed tutorials and step-by-step guides. Follow these links to learn more abo
 - [Tutorials](https://isaac-sim.github.io/IsaacLab/main/source/tutorials/index.html)
 - [Available environments](https://isaac-sim.github.io/IsaacLab/main/source/overview/environments.html)
 
-## Performance Dashboard
-
-We continuously benchmark Isaac Lab across different physics backends, renderers, and data types.
-The **[Isaac Lab Performance Dashboard](https://nvidia.github.io/omniperf/)** provides interactive
-charts showing preset comparison results, performance history, and environment scaling data from
-our internal CI/CD benchmarks.
-
-## Isaac Sim Version Dependency
-
-Isaac Lab is built on top of Isaac Sim and requires specific versions of Isaac Sim that are compatible with each
-release of Isaac Lab. Below, we outline the recent Isaac Lab releases and GitHub branches and their corresponding
-dependency versions for Isaac Sim.
-
-| Isaac Lab Version             | Isaac Sim Version         |
-| ----------------------------- | ------------------------- |
-| `develop` branch              | Isaac Sim 6.0             |
-| `main` branch                 | Isaac Sim 4.5 / 5.0 / 5.1 |
-| `v2.3.X`                      | Isaac Sim 4.5 / 5.0 / 5.1 |
-| `v2.2.X`                      | Isaac Sim 4.5 / 5.0       |
-| `v2.1.X`                      | Isaac Sim 4.5             |
-| `v2.0.X`                      | Isaac Sim 4.5             |
-
-## Limitations
-
-The `develop` branch of Isaac Lab 3.0-Beta is currently available on Ubuntu. Windows
-support and Isaac Lab pip wheels will be available soon.
-
-## Contributing to Isaac Lab
-
-We wholeheartedly welcome contributions from the community to make this framework mature and useful for everyone.
-These may happen as bug reports, feature requests, or code contributions. For details, please check our
-[contribution guidelines](https://isaac-sim.github.io/IsaacLab/main/source/refs/contributing.html).
-
-## Show & Tell: Share Your Inspiration
-
-We encourage you to utilize our [Show & Tell](https://github.com/isaac-sim/IsaacLab/discussions/categories/show-and-tell)
-area in the `Discussions` section of this repository. This space is designed for you to:
-
-* Share the tutorials you've created
-* Showcase your learning content
-* Present exciting projects you've developed
-
-By sharing your work, you'll inspire others and contribute to the collective knowledge
-of our community. Your contributions can spark new ideas and collaborations, fostering
-innovation in robotics and simulation.
 
 ## Troubleshooting
 
@@ -154,7 +220,27 @@ If you use Isaac Lab in your research, please cite the technical report:
 }
 ```
 
+If you use the system identification or sim-to-real gap estimation tooling, please also cite PACE Sim2Real:
+
+```
+@article{bjelonic2025towards,
+  title         = {Towards Bridging the Gap: Systematic Sim-to-Real Transfer for Diverse Legged Robots},
+  author        = {Bjelonic, Filip and Tischhauser, Fabian and Hutter, Marco},
+  journal       = {arXiv preprint arXiv:2509.06342},
+  year          = {2025},
+  eprint        = {2509.06342},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs.RO},
+}
+```
+
+
 ## Acknowledgement
 
 Isaac Lab development initiated from the [Orbit](https://isaac-orbit.github.io/) framework.
 We gratefully acknowledge the authors of Orbit for their foundational contributions.
+
+The system identification and sim-to-real workflows in this repository build upon the following projects:
+
+* [PACE](https://github.com/leggedrobotics/pace-sim2real): Systematic sim-to-real transfer framework for legged robots, identifying actuator and joint dynamics with standard joint encoders.
+* [SAGE](https://github.com/isaac-sim2real/sage): Sim2Real Actuator Gap Estimator for benchmarking actuator model fidelity against real robot data.

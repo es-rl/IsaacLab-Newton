@@ -79,3 +79,10 @@ tests/
 
 # Ruff cache
 **/.ruff_cache/
+
+# SysID input data (large binary files, bind-mounted in Docker)
+input/sysid_data/
+input/actuator_models/**/*.pt
+input/robot_models/
+input/motion_files/
+input/*.zip

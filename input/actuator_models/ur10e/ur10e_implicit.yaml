@@ -1,0 +1,48 @@
+# UR10e arm motor parameters
+#
+# Implicit PD control with motor mechanical parameters.
+# armature and friction are applied directly by the Newton solver.
+# Source: UR10_CFG defaults + system identification.
+
+# Effort/velocity limits (enforced by physics engine)
+effort_limit_sim: 87.0           # N-m
+velocity_limit_sim: 100.0        # rad/s
+
+# PD gains — per-joint from CMA-ES sysid
+stiffness:
+  shoulder_pan_joint: 912.038696
+  shoulder_lift_joint: 1912.034424
+  elbow_joint: 123.228523
+  wrist_1_joint: 1171.656494
+  wrist_2_joint: 761.391235
+  wrist_3_joint: 489.904449
+damping:
+  shoulder_pan_joint: 53.031002
+  shoulder_lift_joint: 93.192406
+  elbow_joint: 99.682487
+  wrist_1_joint: 60.497066
+  wrist_2_joint: 30.249228
+  wrist_3_joint: 80.2211
+
+# Mechanical parameters — per-joint from CMA-ES sysid
+armature:
+  shoulder_pan_joint: 0.162168
+  shoulder_lift_joint: 0.422634
+  elbow_joint: 0.252878
+  wrist_1_joint: 0.317754
+  wrist_2_joint: 0.339722
+  wrist_3_joint: 0.303721
+dynamic_friction:
+  shoulder_pan_joint: 1.028984
+  shoulder_lift_joint: 2.284394
+  elbow_joint: 4.91707
+  wrist_1_joint: 1.584641
+  wrist_2_joint: 2.49921
+  wrist_3_joint: 4.041541
+viscous_friction:
+  shoulder_pan_joint: 2.841751
+  shoulder_lift_joint: 3.458961
+  elbow_joint: 4.815529
+  wrist_1_joint: 3.508769
+  wrist_2_joint: 0.445023
+  wrist_3_joint: 3.039515

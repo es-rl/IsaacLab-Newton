@@ -1,0 +1,70 @@
+# H1 runtime configuration
+# CLI arguments override values set here.
+
+simulation:
+  physics_freq: 500         # Hz
+  control_freq: 500         # Hz
+  render_freq: 500          # Hz
+  integrator: implicitfast  # Newton solver integrator
+  solver_iterations: 10     # Newton solver iterations
+  ls_iterations: 10         # Newton line-search iterations
+
+#-------------------------------------------------------------------------------------
+benchmark:
+  fix_root: true
+  buffer_time: 5.0           # seconds — settle before motion playback
+  motor_lag_ms: null         # null = read from actuator YAML
+  kp: null                   # null = use actuator YAML defaults
+  kd: null
+
+  # Motion data — specify ONE of motion_files or real_control_csv (not both)
+  motion_files: input/motion_files/h1/arm_march2026/elbow   # directory of motor CSVs (auto-converted) or path to SAGE motion file
+  # real_control_csv: h1/arm_march2026/all_motors_moving/Chirps/C03_f0_1-0_5_a0_20_motor.csv         # path to real robot control.csv for replay
+  original_control_freq: null                                                                        # Hz — auto-detected from CSV timestamps if null
+  motion_name: arm_march2026                                                                         # motion name for output directory
+
+  # Output paths
+  output_folder: output/sim2real_benchmark   # benchmark + analysis result folder
+
+#-------------------------------------------------------------------------------------
+analysis:
+  output_dir: output/sim2real_analysis       # analysis plots and metrics
+  sample_dt: 0.005                       # seconds — comparison timestep
+  motion_names: "*elbow*"    # specific motions to analyze (default: all). Also accepts comma-separated string.
+
+#-------------------------------------------------------------------------------------
+# Actuator model for benchmark arm joints.
+# model_type: implicit | dcmotor | lstm | lstm_perjoint  (gru / gru_perjoint also accepted)
+# yaml_file and network_file paths are relative to input/actuator_models/
+actuator:
+  model_type: implicit
+  yaml_file: h1/h1_arm_implicit.yaml
+
+  # --- For dcmotor: ---
+  # model_type: dcmotor
+  # yaml_file: h1/h1_arm_dcmotor.yaml
+  #
+  # --- For single LSTM/GRU (one model for all arm joints): ---
+  # model_type: lstm
+  # network_file: h1/gru_fullarm_elbow_stateful_best.pt
+  #
+  # --- For per-joint LSTM/GRU (separate model per joint type, L/R share): ---
+  # model_type: lstm_perjoint
+  # network_files:
+  #   shoulder_pitch: h1/gru_shoulder_pitch_stateful_best.pt
+  #   shoulder_roll: h1/gru_shoulder_pitch_stateful_best.pt
+  #   shoulder_yaw: h1/gru_shoulder_pitch_stateful_best.pt
+  #   elbow: h1/gru_fullarm_elbow_stateful_best.pt
+
+#-------------------------------------------------------------------------------------
+sysid:
+  output_dir: elbow
+  bounds_yaml: h1/h1_arms_sysid_bounds.yaml                    # path relative to input/run_configs/
+  real_data_dir: input/sysid_data/h1/arm_march2026/elbow       # motor CSV dir (auto-converted) or SAGE dir
+  joints: [elbow] 
+  #[elbow, shoulder_pitch, shoulder_roll, shoulder_yaw]        # "full" = all joint types, or list: [elbow, shoulder_pitch]
+  num_envs: 64
+  max_iter: 200
+  sigma: 0.5
+  epsilon: 0.01
+  buffer_time: 2.0                                             # seconds — settle before replay

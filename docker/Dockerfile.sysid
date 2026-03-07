@@ -1,0 +1,42 @@
+# This Dockerfile adds sysid/SAGE dependencies
+# on top of the base Isaac Lab image
+
+ARG DOCKER_NAME_SUFFIX=""
+
+FROM isaac-lab-base${DOCKER_NAME_SUFFIX} AS sysid
+
+# Install newton and mujoco dependencies
+RUN --mount=type=cache,target=${DOCKER_USER_HOME}/.cache/pip \
+    ${ISAACLAB_PATH}/isaaclab.sh -p -m pip install --force-reinstall \
+    "newton @ git+https://github.com/newton-physics/newton.git@release-1.0" \
+    "mujoco>=3.5.0" \
+    "mujoco-warp>=3.5.0"
+
+# Install sysid and model training dependencies
+RUN --mount=type=cache,target=${DOCKER_USER_HOME}/.cache/pip \
+    ${ISAACLAB_PATH}/isaaclab.sh -p -m pip install \
+    cmaes \
+    optuna \
+    pyyaml \
+    tqdm
+
+# Install SAGE for sim-to-real actuator gap analysis
+RUN --mount=type=cache,target=${DOCKER_USER_HOME}/.cache/pip \
+    ${ISAACLAB_PATH}/isaaclab.sh -p -m pip install \
+    "sage @ git+https://github.com/isaac-sim2real/sage.git@main"
+
+# Copy robot joint configs for SAGE (it looks for configs/ next to the sage package)
+COPY scripts/sim2real_gap/configs/ ${ISAACSIM_ROOT_PATH}/kit/python/lib/python3.11/site-packages/configs/
+
+# Make Isaac Sim's python the default for all contexts (not just interactive shells).
+# The _isaac_sim/python.sh wrapper sets up PYTHONPATH and other env vars needed by IsaacLab.
+RUN ln -sf ${ISAACLAB_PATH}/_isaac_sim/python.sh /usr/local/bin/isaac-python && \
+    printf '#!/bin/bash\nexec %s/_isaac_sim/python.sh "$@"\n' "${ISAACLAB_PATH}" > /usr/local/bin/python && \
+    chmod +x /usr/local/bin/python && \
+    cp /usr/local/bin/python /usr/local/bin/python3
+
+# Copy entrypoint script
+COPY docker/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+ENTRYPOINT ["/entrypoint.sh"]

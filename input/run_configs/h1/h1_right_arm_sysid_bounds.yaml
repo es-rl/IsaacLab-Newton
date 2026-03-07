@@ -1,0 +1,43 @@
+# H1 right arm system identification parameter bounds
+# 4 joints (no mirroring): right_shoulder_pitch, right_shoulder_roll, right_shoulder_yaw, right_elbow
+#
+# CMA-ES optimizes these in normalized [-1, 1] space with linear mapping to bounds.
+# Source of initial ranges: Unitree M8010-6.333 datasheet + sysid results.
+
+mirror: false
+
+joint_types:
+  - right_shoulder_pitch
+  - right_shoulder_roll
+  - right_shoulder_yaw
+  - right_elbow
+
+parameters:
+  armature:
+    lower: 0.001
+    upper: 0.05
+  dynamic_friction:
+    lower: 0.0
+    upper: 1.0
+  viscous_friction:
+    lower: 0.0
+    upper: 2.0
+  # Uncomment to also optimize PD gains per joint:
+  # stiffness:
+  #   lower: 10.0
+  #   upper: 200.0
+  # damping:
+  #   lower: 0.1
+  #   upper: 10.0
+
+# Fixed parameters (not optimized)
+fixed:
+  stiffness: 60.0        # kp
+  damping: 1.5           # kd
+  motor_lag_ms: 35.6     # command delay (ms)
+
+# CMA-ES defaults (can be overridden via CLI)
+cmaes:
+  sigma: 0.5
+  max_iterations: 200
+  epsilon: 0.01

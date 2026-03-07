@@ -1,0 +1,32 @@
+# UR10e runtime configuration
+# CLI arguments override values set here.
+
+simulation:
+  physics_freq: 500         # Hz
+  control_freq: 500         # Hz
+  render_freq: 500          # Hz
+  integrator: implicitfast  # Newton solver integrator
+  solver_iterations: 10     # Newton solver iterations
+  ls_iterations: 10         # Newton line-search iterations
+
+benchmark:
+  fix_root: true
+  buffer_time: 5.0          # seconds — settle before motion playback
+  motor_lag_ms: null         # null = read from actuator YAML
+  kp: null                   # null = use actuator YAML defaults
+  kd: null
+
+# Actuator model for benchmark arm joints.
+# model_type: implicit | dcmotor | lstm | lstm_perjoint  (gru / gru_perjoint also accepted)
+# yaml_file:  path relative to input/actuator_models/
+actuator:
+  model_type: implicit
+  yaml_file: ur10e/ur10e_implicit.yaml
+
+sysid:
+  bounds_yaml: ur10e/ur10e_sysid_bounds.yaml  # path relative to input/run_configs/
+  num_envs: 64
+  max_iter: 200
+  sigma: 0.5
+  epsilon: 0.01
+  buffer_time: 2.0          # seconds — settle before replay

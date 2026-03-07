@@ -83,6 +83,21 @@ x-default-isaac-lab-deploy: &default-isaac-lab-deploy
           capabilities: [ gpu ]
 
 services:
+  # This service builds Isaac Sim 6.0.0 from source
+  # Required because Isaac Sim 6.0 is not yet available on NGC
+  isaac-sim:
+    profiles: [ "isaacsim" ]
+    env_file: .env.base
+    build:
+      context: ../
+      dockerfile: docker/Dockerfile.isaacsim
+      args:
+        - ISAACSIM_VERSION_ARG=${ISAACSIM_VERSION}
+        - ISAACSIM_GIT_REF_ARG=${ISAACSIM_GIT_REF:-main}
+        - ISAACSIM_ROOT_PATH_ARG=${DOCKER_ISAACSIM_ROOT_PATH}
+    image: ${ISAACSIM_BASE_IMAGE}:${ISAACSIM_VERSION}
+    deploy: *default-isaac-lab-deploy
+
   # This service is the base Isaac Lab image
   isaac-lab-base:
     profiles: [ "base" ]
@@ -133,6 +148,84 @@ services:
     deploy: *default-isaac-lab-deploy
     # This is the entrypoint for the container
     entrypoint: bash
+    stdin_open: true
+    tty: true
+
+  # This service adds sysid/SAGE dependencies
+  # on top of the base image
+  isaac-lab-sysid:
+    profiles: [ "sysid" ]
+    env_file: .env.base
+    build:
+      context: ../
+      dockerfile: docker/Dockerfile.sysid
+      args:
+        - DOCKER_NAME_SUFFIX=${DOCKER_NAME_SUFFIX-}
+    image: isaac-lab-sysid${DOCKER_NAME_SUFFIX-}
+    container_name: isaac-lab-sysid${DOCKER_NAME_SUFFIX-}
+    environment: *default-isaac-lab-environment
+    volumes:
+      - type: volume
+        source: isaac-cache-kit
+        target: ${DOCKER_ISAACSIM_ROOT_PATH}/kit/cache
+      - type: volume
+        source: isaac-cache-ov
+        target: ${DOCKER_USER_HOME}/.cache/ov
+      - type: volume
+        source: isaac-cache-pip
+        target: ${DOCKER_USER_HOME}/.cache/pip
+      - type: volume
+        source: isaac-cache-gl
+        target: ${DOCKER_USER_HOME}/.cache/nvidia/GLCache
+      - type: volume
+        source: isaac-cache-compute
+        target: ${DOCKER_USER_HOME}/.nv/ComputeCache
+      - type: volume
+        source: isaac-logs
+        target: ${DOCKER_USER_HOME}/.nvidia-omniverse/logs
+      - type: volume
+        source: isaac-carb-logs
+        target: ${DOCKER_ISAACSIM_ROOT_PATH}/kit/logs/Kit/Isaac-Sim
+      - type: volume
+        source: isaac-data
+        target: ${DOCKER_USER_HOME}/.local/share/ov/data
+      - type: volume
+        source: isaac-docs
+        target: ${DOCKER_USER_HOME}/Documents
+      - type: bind
+        source: ../source
+        target: ${DOCKER_ISAACLAB_PATH}/source
+      - type: bind
+        source: ../scripts
+        target: ${DOCKER_ISAACLAB_PATH}/scripts
+      - type: bind
+        source: ../docs
+        target: ${DOCKER_ISAACLAB_PATH}/docs
+      - type: bind
+        source: ../tools
+        target: ${DOCKER_ISAACLAB_PATH}/tools
+      - type: volume
+        source: isaac-lab-docs
+        target: ${DOCKER_ISAACLAB_PATH}/docs/_build
+      - type: volume
+        source: isaac-lab-logs
+        target: ${DOCKER_ISAACLAB_PATH}/logs
+      - type: volume
+        source: isaac-lab-data
+        target: ${DOCKER_ISAACLAB_PATH}/data_storage
+      - type: bind
+        source: .isaac-lab-docker-history
+        target: ${DOCKER_USER_HOME}/.bash_history
+        # Bind mount input/ for sysid data, configs, and models
+      - type: bind
+        source: ../input
+        target: ${DOCKER_ISAACLAB_PATH}/input
+        # Bind mount output/ so results persist on the host
+      - type: bind
+        source: ../output
+        target: ${DOCKER_ISAACLAB_PATH}/output
+    network_mode: host
+    deploy: *default-isaac-lab-deploy
     stdin_open: true
     tty: true
 
