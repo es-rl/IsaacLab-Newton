@@ -34,27 +34,37 @@ analysis:
 
 #-------------------------------------------------------------------------------------
 # Actuator model for benchmark arm joints.
-# model_type: implicit | dcmotor | lstm | lstm_perjoint  (gru / gru_perjoint also accepted)
-# yaml_file and network_file paths are relative to input/actuator_models/
-actuator:
-  model_type: implicit
-  yaml_file: h1/h1_arm_implicit.yaml
+# model_type: implicit | dcmotor | lstm | lstm_perjoint | fmu  (gru / gru_perjoint also accepted)
+# yaml_file and network_file/fmu_path paths are relative to input/actuator_models/
+# actuator:
+  # model_type: implicit
+  # yaml_file: h1/h1_arm_implicit.yaml
 
   # --- For dcmotor: ---
+# actuator:
   # model_type: dcmotor
   # yaml_file: h1/h1_arm_dcmotor.yaml
   #
   # --- For single LSTM/GRU (one model for all arm joints): ---
+# actuator:
   # model_type: lstm
   # network_file: h1/gru_fullarm_elbow_stateful_best.pt
   #
   # --- For per-joint LSTM/GRU (separate model per joint type, L/R share): ---
+# actuator:
   # model_type: lstm_perjoint
   # network_files:
   #   shoulder_pitch: h1/gru_shoulder_pitch_stateful_best.pt
   #   shoulder_roll: h1/gru_shoulder_pitch_stateful_best.pt
   #   shoulder_yaw: h1/gru_shoulder_pitch_stateful_best.pt
   #   elbow: h1/gru_fullarm_elbow_stateful_best.pt
+  #
+  # --- For FMU hybrid model (Ansys Twin Builder): ---
+actuator:
+  model_type: fmu
+  yaml_file: h1/h1_arm_implicit.yaml           # PD gains for torque_pred input
+  fmu_path: h1/actuator_single_hybrid           # FMU directory or .fmu archive
+  fmu_step_size: 0.002                          # should match physics dt
 
 #-------------------------------------------------------------------------------------
 sysid:

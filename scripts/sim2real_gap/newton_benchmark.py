@@ -31,7 +31,7 @@ from isaaclab_assets.robots.unitree import H1_MINIMAL_CFG
 
 from spawn_utils import spawn_from_usd_with_fixed_base
 
-from actuator_models import load_dc_motor_cfg
+from actuator_models import load_dc_motor_cfg, load_fmu_actuator_cfg
 
 # Local USD assets (avoids dependency on cloud-hosted Omniverse Nucleus server)
 _H1_LOCAL_USD = os.path.abspath(
@@ -554,10 +554,24 @@ def _build_arm_actuators(run_cfg: dict, robot_name: str) -> dict:
             )
         return actuators
 
+    elif model_type == "fmu":
+        fmu_dir = act_cfg.get("fmu_path")
+        if not fmu_dir:
+            raise ValueError("actuator.fmu_path required for model_type=fmu")
+        if not yaml_file:
+            raise ValueError("actuator.yaml_file required for model_type=fmu (PD gains for torque_pred)")
+        fmu_step = act_cfg.get("fmu_step_size", 0.002)
+        return {group_name: load_fmu_actuator_cfg(
+            yaml_file=yaml_file,
+            fmu_path=fmu_dir,
+            joint_names_expr=joint_exprs,
+            fmu_step_size=fmu_step,
+        )}
+
     else:
         raise ValueError(
             f"Unknown actuator model_type '{model_type}'. "
-            "Choose from: implicit, dcmotor, lstm, lstm_perjoint (gru/gru_perjoint also accepted)"
+            "Choose from: implicit, dcmotor, lstm, lstm_perjoint, fmu"
         )
 
 
@@ -881,6 +895,7 @@ class NewtonJointMotionBenchmark:
         suffix_map = {
             "ImplicitActuator": "implicit",
             "DCMotor": "dcmotor",
+            "ActuatorNetFMU": "fmu",
             "ActuatorNetLSTM": "lstm",
         }
         for name, actuator in self.robot.actuators.items():

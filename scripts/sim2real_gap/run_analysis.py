@@ -37,7 +37,11 @@ from actuator_models import load_actuator_params
 from run_configs import load_run_cfg
 
 # Known actuator suffixes (must match newton_benchmark.py suffix_map values)
-ACTUATOR_SUFFIXES = ("_implicit", "_dcmotor", "_lstm_perjoint", "_lstm", "_gru_perjoint", "_gru")
+ACTUATOR_SUFFIXES = (
+    "_implicit", "_dcmotor",
+    "_lstm_perjoint", "_lstm", "_gru_perjoint", "_gru",
+    "_fmu", "_actuatornetfmu",
+)
 
 # Fallback robot name -> actuator YAML (used if run config has no actuator section)
 _ACTUATOR_YAML_MAP = {
