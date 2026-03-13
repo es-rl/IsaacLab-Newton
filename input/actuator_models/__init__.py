@@ -61,6 +61,8 @@ def load_implicit_actuator_cfg(yaml_file: str, joint_names_expr: list[str]):
         damping=params["damping"],
         armature=params.get("armature"),
         friction=params.get("friction"),
+        dynamic_friction=params.get("dynamic_friction"),
+        viscous_friction=params.get("viscous_friction"),
     )
 
 

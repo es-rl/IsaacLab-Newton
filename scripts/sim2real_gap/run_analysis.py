@@ -261,27 +261,52 @@ def _strip_actuator_suffix(name):
 
 
 def _create_real_symlinks(result_folder, robot_name, motion_source):
-    """Create symlinks in real/ so suffixed sim motion names find their real counterpart.
+    """Create symlinks in real/ so SAGE's strict name matching works.
 
-    For each sim motion like 'motion_stand_dcmotor', if real/ has 'motion_stand'
-    but not 'motion_stand_dcmotor', create a symlink:
-        real/.../motion_stand_dcmotor -> motion_stand
+    Handles two sim output layouts:
+
+    1. **Subfolder layout** (new): sim/.../arm_march2026/implicit/EC01_elbow_chirp/
+       Real data is at real/.../arm_march2026/EC01_elbow_chirp/ (no actuator subfolder).
+       Creates: real/.../arm_march2026/implicit/ -> .  (symlink to parent)
+
+    2. **Suffix layout** (legacy): sim/.../arm_march2026/EC01_elbow_chirp_implicit/
+       Real data is at real/.../arm_march2026/EC01_elbow_chirp/.
+       Creates: real/.../EC01_elbow_chirp_implicit -> EC01_elbow_chirp
 
     Returns list of created symlink paths (for cleanup).
     """
     sim_dir = os.path.join(result_folder, "sim", robot_name, motion_source)
     real_dir = os.path.join(result_folder, "real", robot_name, motion_source)
 
-    if not os.path.isdir(sim_dir) or not os.path.isdir(real_dir):
+    if not os.path.isdir(sim_dir):
+        return []
+
+    created_links = []
+
+    # Check for subfolder layout: the last component of motion_source is an
+    # actuator name, and real data lives one level up without that subfolder.
+    parts = motion_source.split("/")
+    if len(parts) >= 2:
+        actuator_part = parts[-1]
+        # Strip the actuator part to get the base motion_source
+        base_motion_source = "/".join(parts[:-1])
+        real_parent = os.path.join(result_folder, "real", robot_name, base_motion_source)
+        # If real/ has the base dir but not the actuator subdir, symlink it
+        if os.path.isdir(real_parent) and not os.path.exists(real_dir):
+            os.symlink(".", real_dir)
+            print(f"[Analysis] Linked real/{robot_name}/{motion_source} -> . (actuator subfolder)")
+            created_links.append(real_dir)
+            return created_links
+
+    # Legacy suffix layout: sim motion folders have actuator suffix appended
+    if not os.path.isdir(real_dir):
         return []
 
     sim_motions = [d for d in os.listdir(sim_dir) if os.path.isdir(os.path.join(sim_dir, d))]
-    created_links = []
-
     for sim_name in sim_motions:
         base_name = _strip_actuator_suffix(sim_name)
         if base_name is None:
-            continue  # No known suffix, assume exact match expected
+            continue
 
         real_target = os.path.join(real_dir, base_name)
         real_link = os.path.join(real_dir, sim_name)
@@ -347,14 +372,16 @@ def _is_motion_folder(path):
 def _discover_motion_sources(result_folder, robot_name, base_motion_source):
     """Discover motion sources, handling flat, nested, and mixed directory structures.
 
-    Flat:   sim/h1/custom/EC01_elbow_chirp_implicit/control.csv
-    Nested: sim/h1/custom/elbow/EC01_elbow_chirp_implicit/control.csv
-    Mixed:  both flat motions and nested groups coexist
+    Flat:     sim/h1/custom/EC01_elbow_chirp_implicit/control.csv
+    Nested:   sim/h1/custom/elbow/EC01_elbow_chirp_implicit/control.csv
+    Actuator: sim/h1/custom/implicit/EC01_elbow_chirp/control.csv
+    Mixed:    combinations of the above
 
     Returns list of motion_source strings, e.g.:
-      flat:   ["custom"]
-      nested: ["custom/elbow", "custom/shoulder_pitch_Config A", ...]
-      mixed:  ["custom", "custom/shoulder_pitch_Config A", ...]
+      flat:     ["custom"]
+      nested:   ["custom/elbow", "custom/shoulder_pitch_Config A", ...]
+      actuator: ["custom/implicit"]
+      mixed:    ["custom", "custom/shoulder_pitch_Config A", ...]
     """
     sim_dir = os.path.join(result_folder, "sim", robot_name, base_motion_source)
     if not os.path.isdir(sim_dir):
@@ -599,13 +626,18 @@ def main():
             args.result_folder, args.robot_name, motion_source, args.motion_names
         )
 
-        # Ensure sim and real directories exist (benchmark may not have created them yet)
-        for subdir in ("sim", "real"):
-            path = os.path.join(args.result_folder, subdir, args.robot_name, motion_source)
-            os.makedirs(path, exist_ok=True)
+        # Ensure sim directory exists (benchmark should have created it already)
+        sim_path = os.path.join(args.result_folder, "sim", args.robot_name, motion_source)
+        os.makedirs(sim_path, exist_ok=True)
 
-        # Create symlinks so suffixed sim names match real data folders
+        # Create symlinks so SAGE finds real data through actuator subfolders.
+        # Must run BEFORE creating real dirs, otherwise makedirs blocks symlink creation.
         created_links = _create_real_symlinks(args.result_folder, args.robot_name, motion_source)
+
+        # Ensure real directory exists (only if symlink wasn't created above)
+        real_path = os.path.join(args.result_folder, "real", args.robot_name, motion_source)
+        if not os.path.exists(real_path):
+            os.makedirs(real_path, exist_ok=True)
         all_created_links.extend(created_links)
 
         # Snapshot existing output folders before analysis so we only report new ones

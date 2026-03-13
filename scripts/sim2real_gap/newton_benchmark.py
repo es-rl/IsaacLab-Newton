@@ -876,6 +876,11 @@ class NewtonJointMotionBenchmark:
         # Reset scene state
         self.scene.reset()
 
+        # Apply sysid friction parameters that Isaac Lab doesn't natively write
+        # to the Newton solver (dynamic_friction → joint_friction,
+        # viscous_friction → mujoco.dof_passive_damping).
+        self._apply_newton_friction_params()
+
         # Build joint name-to-index mapping
         self._joint_name_to_idx = {}
         for i, name in enumerate(self.robot.joint_names):
@@ -906,12 +911,143 @@ class NewtonJointMotionBenchmark:
                 self._actuator_suffix = suffix_map.get(actuator_type, actuator_type.lower())
         if len(arm_groups) > 1:
             self._actuator_suffix += "_perjoint"
-        log_message(f"Arms actuator model: {self._actuator_suffix} (output folders will be suffixed)")
+
+        # Use YAML filename stem as suffix when available (e.g. "h1_arm_sysid_implicit")
+        act_section = self._run_cfg.get("actuator", {})
+        yaml_file = act_section.get("yaml_file")
+        if yaml_file:
+            self._actuator_suffix = os.path.splitext(os.path.basename(yaml_file))[0]
+        log_message(f"Arms actuator model: {self._actuator_suffix} (output folders will use this name)")
 
         self._log_motor_params()
 
         # Track simulation time manually
         self._sim_time = 0.0
+
+    def _apply_newton_friction_params(self):
+        """Write dynamic_friction and viscous_friction to Newton solver.
+
+        Isaac Lab's actuator setup writes ``friction`` (static/Coulomb) to
+        ``model.joint_friction`` but does NOT write:
+        - ``dynamic_friction`` → should go to ``model.joint_friction``
+        - ``viscous_friction`` → should go to ``model.mujoco.dof_passive_damping``
+
+        This matches the workaround used in ``run_sysid.py``.
+        """
+        import re
+
+        # Collect per-joint friction values from arm actuator configs
+        has_dynamic = False
+        has_viscous = False
+        for _name, actuator in self.robot.actuators.items():
+            cfg = actuator.cfg
+            if getattr(cfg, "dynamic_friction", None) is not None:
+                has_dynamic = True
+            if getattr(cfg, "viscous_friction", None) is not None:
+                has_viscous = True
+
+        if not has_dynamic and not has_viscous:
+            return
+
+        # Locate the Newton model via BFS from robot.root_view
+        newton_model = None
+        visited = set()
+        queue = [("view", self.robot.root_view)]
+        for _depth in range(4):
+            next_queue = []
+            for path, obj in queue:
+                oid = id(obj)
+                if oid in visited:
+                    continue
+                visited.add(oid)
+                if hasattr(obj, "joint_target_ke"):
+                    newton_model = obj
+                    log_message(f"Newton model found at root_view -> {path}")
+                    break
+                for attr in dir(obj):
+                    if attr.startswith("_"):
+                        continue
+                    try:
+                        child = getattr(obj, attr)
+                        if hasattr(child, "__dict__") or hasattr(child, "__slots__"):
+                            next_queue.append((f"{path}.{attr}", child))
+                    except Exception:
+                        pass
+            if newton_model is not None:
+                break
+            queue = next_queue
+
+        if newton_model is None:
+            log_message("WARNING: Could not find Newton model — skipping friction params")
+            return
+
+        device = self.robot.device
+        num_dofs = len(self.robot.joint_names)
+
+        def _resolve_param(param_value, joint_names):
+            """Resolve a scalar or regex-keyed dict to per-joint values."""
+            if isinstance(param_value, (int, float)):
+                return [float(param_value)] * len(joint_names)
+            if isinstance(param_value, dict):
+                vals = [0.0] * len(joint_names)
+                for i, jname in enumerate(joint_names):
+                    for pattern, v in param_value.items():
+                        if re.fullmatch(pattern, jname):
+                            vals[i] = float(v)
+                            break
+                return vals
+            return [0.0] * len(joint_names)
+
+        # Build per-DOF arrays for dynamic_friction and viscous_friction
+        dynamic_vals = np.zeros(num_dofs)
+        viscous_vals = np.zeros(num_dofs)
+
+        for _name, actuator in self.robot.actuators.items():
+            cfg = actuator.cfg
+            joint_ids = actuator.joint_indices
+            if isinstance(joint_ids, slice):
+                joint_ids = list(range(*joint_ids.indices(num_dofs)))
+
+            joint_names = [self.robot.joint_names[j] for j in joint_ids]
+
+            if has_dynamic and getattr(cfg, "dynamic_friction", None) is not None:
+                vals = _resolve_param(cfg.dynamic_friction, joint_names)
+                for j, v in zip(joint_ids, vals):
+                    dynamic_vals[j] = v
+
+            if has_viscous and getattr(cfg, "viscous_friction", None) is not None:
+                vals = _resolve_param(cfg.viscous_friction, joint_names)
+                for j, v in zip(joint_ids, vals):
+                    viscous_vals[j] = v
+
+        # Write dynamic_friction → model.joint_friction (Coulomb friction)
+        if has_dynamic and np.any(dynamic_vals > 0):
+            joint_friction = newton_model.joint_friction
+            friction_np = joint_friction.numpy()
+            # Newton model may be (num_worlds, num_dofs) or (total_dofs,)
+            if friction_np.ndim == 1:
+                friction_np[:num_dofs] = dynamic_vals
+            else:
+                for w in range(friction_np.shape[0]):
+                    friction_np[w, :num_dofs] = dynamic_vals
+            joint_friction.assign(friction_np)
+            log_message(f"Applied dynamic_friction to Newton joint_friction: {dynamic_vals[dynamic_vals > 0].tolist()}")
+
+        # Write viscous_friction → model.mujoco.dof_passive_damping
+        if has_viscous and np.any(viscous_vals > 0):
+            mujoco_ns = getattr(newton_model, "mujoco", None)
+            if mujoco_ns is None or not hasattr(mujoco_ns, "dof_passive_damping"):
+                log_message("WARNING: Newton model has no mujoco.dof_passive_damping — viscous_friction not applied")
+                return
+            dof_damping = mujoco_ns.dof_passive_damping
+            dof_np = dof_damping.numpy()
+            if dof_np.ndim == 1:
+                dof_np[:num_dofs] = viscous_vals
+            else:
+                for w in range(dof_np.shape[0]):
+                    dof_np[w, :num_dofs] = viscous_vals
+            dof_damping.assign(dof_np)
+            log_message(f"Applied viscous_friction to Newton dof_passive_damping: {viscous_vals[viscous_vals > 0].tolist()}")
 
     def _log_motor_params(self):
         """Print actuator parameters for each group in a table."""
@@ -1063,9 +1199,9 @@ class NewtonJointMotionBenchmark:
 
     def _init_logger(self):
         """Create output directory and CSV files in SAGE-compatible format."""
-        folder_name = f"{self.motion_name}_{self._actuator_suffix}"
         self.sim_output_folder = os.path.join(
-            self.output_folder, "sim", self.robot_name, self.motion_source, folder_name
+            self.output_folder, "sim", self.robot_name, self.motion_source,
+            self._actuator_suffix, self.motion_name,
         )
         os.makedirs(self.sim_output_folder, exist_ok=True)
 
@@ -1198,7 +1334,9 @@ class NewtonJointMotionBenchmark:
             act_pos = self._to_torch(self.robot.data.joint_pos)[0, self.joint_indices].cpu().numpy()
             act_vel = self._to_torch(self.robot.data.joint_vel)[0, self.joint_indices].cpu().numpy()
 
-            # Attempt to read applied torques; fall back to zeros if unavailable
+            # Read applied torques (motor torque from PD + friction).
+            # Note: real H1 torque sensors report motor torque, not joint
+            # torque, so gravity compensation should NOT be added here.
             try:
                 act_eff = self._to_torch(self.robot.data.applied_torque)[0, self.joint_indices].cpu().numpy()
             except (AttributeError, RuntimeError):
