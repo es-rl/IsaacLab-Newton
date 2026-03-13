@@ -163,8 +163,15 @@ def compute_residual_and_stats(
     col_torque: str,
     kp: float,
     kd: float,
+    dynamic_friction: float = 0.0,
+    viscous_friction: float = 0.0,
 ) -> dict:
     """Pass 1: load all CSVs raw, compute tau_residual, compute normalization stats.
+
+    The residual is: tau_real - (kp * pos_error - kd * vel)
+    Optionally subtracts friction terms if provided (non-zero):
+        - dynamic_friction * sign(vel)  (Coulomb friction)
+        - viscous_friction * vel        (viscous damping)
 
     Returns dict mapping column_name -> {"mean", "std", "p1", "p99"}.
     """
@@ -188,13 +195,16 @@ def compute_residual_and_stats(
 
     combined = pd.concat(all_dfs, ignore_index=True)
 
-    # Compute residual: tau_residual = tau_real - (kp * pos_error - kd * velocity)
+    # Compute residual: tau_real - PD_torque - friction_torque
     col_pos_err = cols_in[1]
     col_vel     = cols_in[2]
-    combined[COL_RESIDUAL] = (
-        combined[col_torque]
-        - (kp * combined[col_pos_err] - kd * combined[col_vel])
-    )
+    pd_torque = kp * combined[col_pos_err] - kd * combined[col_vel]
+    friction_torque = 0.0
+    if dynamic_friction != 0.0:
+        friction_torque = friction_torque + dynamic_friction * np.sign(combined[col_vel])
+    if viscous_friction != 0.0:
+        friction_torque = friction_torque + viscous_friction * combined[col_vel]
+    combined[COL_RESIDUAL] = combined[col_torque] - pd_torque - friction_torque
 
     # Compute stats for all columns
     stats: dict[str, dict] = {}
@@ -224,6 +234,8 @@ def _csv_to_array_hybrid(
     kp: float,
     kd: float,
     stats: dict,
+    dynamic_friction: float = 0.0,
+    viscous_friction: float = 0.0,
 ) -> np.ndarray | None:
     """Pass 2: parse one CSV -> (N, 4) float32 array [pos, pos_err, vel, residual].
 
@@ -237,10 +249,13 @@ def _csv_to_array_hybrid(
         # Compute residual (raw physical units)
         col_pos_err = cols_in[1]
         col_vel     = cols_in[2]
-        df[COL_RESIDUAL] = (
-            df[col_torque]
-            - (kp * df[col_pos_err] - kd * df[col_vel])
-        )
+        pd_torque = kp * df[col_pos_err] - kd * df[col_vel]
+        friction_torque = 0.0
+        if dynamic_friction != 0.0:
+            friction_torque = friction_torque + dynamic_friction * np.sign(df[col_vel])
+        if viscous_friction != 0.0:
+            friction_torque = friction_torque + viscous_friction * df[col_vel]
+        df[COL_RESIDUAL] = df[col_torque] - pd_torque - friction_torque
 
         # Clip and normalize all columns
         for col in cols_in + [COL_RESIDUAL]:
@@ -260,6 +275,8 @@ def load_raw_arrays(
     col_torque: str,
     kp: float,
     kd: float,
+    dynamic_friction: float = 0.0,
+    viscous_friction: float = 0.0,
 ) -> tuple[list[np.ndarray], list[np.ndarray], dict]:
     """Two-pass data loading: compute stats, then normalize.
 
@@ -283,7 +300,10 @@ def load_raw_arrays(
 
     # Pass 1: compute stats from all CSVs
     print("[pass 1] computing residual statistics ...")
-    stats = compute_residual_and_stats(all_csvs, cols_in, col_torque, kp, kd)
+    stats = compute_residual_and_stats(
+        all_csvs, cols_in, col_torque, kp, kd,
+        dynamic_friction=dynamic_friction, viscous_friction=viscous_friction,
+    )
 
     # Pass 2: re-load with normalization
     print("[pass 2] loading and normalizing ...")
@@ -291,6 +311,7 @@ def load_raw_arrays(
         _csv_to_array_hybrid,
         cols_in=cols_in, col_torque=col_torque,
         kp=kp, kd=kd, stats=stats,
+        dynamic_friction=dynamic_friction, viscous_friction=viscous_friction,
     )
 
     def _load_list(paths: list[str], label: str) -> list[np.ndarray]:
@@ -340,6 +361,8 @@ def get_gpu_data() -> tuple[list[torch.Tensor], list[torch.Tensor]]:
         tr_arrays, val_arrays, stats = load_raw_arrays(
             DATA_DIRS, COLS_IN_RESOLVED, COL_OUT_RESOLVED,
             PHYSICS_PARAMS["kp"], PHYSICS_PARAMS["kd"],
+            dynamic_friction=PHYSICS_PARAMS.get("dynamic_friction", 0.0),
+            viscous_friction=PHYSICS_PARAMS.get("viscous_friction", 0.0),
         )
         _cache["stats"] = stats
 
@@ -657,6 +680,8 @@ def retrain_best(params: dict, epochs: int = N_FINAL_EPOCHS) -> float:
         json.dump(
             {
                 "model_type":           "hybrid_residual",
+                "subtract_friction":    PHYSICS_PARAMS.get("dynamic_friction", 0.0) != 0.0
+                                        or PHYSICS_PARAMS.get("viscous_friction", 0.0) != 0.0,
                 "physics_params":       PHYSICS_PARAMS,
                 "params":               {k: _j(v) for k, v in params.items()},
                 "normalization":        stats,
@@ -767,8 +792,13 @@ def main():
     print(f"  armature             = {PHYSICS_PARAMS['armature']}")
     print(f"  dynamic_friction     = {PHYSICS_PARAMS['dynamic_friction']}")
     print(f"  viscous_friction     = {PHYSICS_PARAMS['viscous_friction']}")
-    print(f"\nResidual: tau_residual = tau_real - ({PHYSICS_PARAMS['kp']} * pos_error "
-          f"- {PHYSICS_PARAMS['kd']} * velocity)")
+    residual_eq = (f"tau_residual = tau_real - ({PHYSICS_PARAMS['kp']} * pos_error "
+                   f"- {PHYSICS_PARAMS['kd']} * velocity)")
+    if PHYSICS_PARAMS.get("dynamic_friction", 0.0) != 0.0:
+        residual_eq += f" - {PHYSICS_PARAMS['dynamic_friction']} * sign(vel)"
+    if PHYSICS_PARAMS.get("viscous_friction", 0.0) != 0.0:
+        residual_eq += f" - {PHYSICS_PARAMS['viscous_friction']} * vel"
+    print(f"\nResidual: {residual_eq}")
     print()
 
     if args.skip_optuna:

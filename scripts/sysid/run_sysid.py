@@ -863,6 +863,7 @@ def main():
         return wp.to_torch(data) if isinstance(data, wp.array) else data
 
     def sim_step():
+        _apply_stribeck_torque()
         scene.write_data_to_sim()
         sim.step(render=False)
         scene.update(physics_dt)
@@ -958,10 +959,58 @@ def main():
                     dof_np[env_i * num_dofs + joint_id] = vals_np[env_i, j_idx]
         dof_damping.assign(dof_np)
 
+    # --- Stribeck friction support ---
+    # When stribeck_velocity is being optimized, we disable Newton's built-in
+    # Coulomb friction (joint_friction = 0) and instead apply a smooth Stribeck
+    # friction model as an external torque each sim step:
+    #   τ = -dynamic_friction * tanh(v / v_stribeck)
+    # This smoothly transitions from 0 at v=0 to ±dynamic_friction at |v| >> v_s.
+    _has_stribeck = "stribeck_velocity" in {n for n in optimizer.property_names}
+    _stribeck_velocity_cache = None  # (num_envs, num_arm_joints) — set per generation
+
+    def _cache_stribeck_velocity(vals: torch.Tensor):
+        nonlocal _stribeck_velocity_cache
+        _stribeck_velocity_cache = vals.clone()
+
+    def _write_dynamic_friction_maybe_disable(vals: torch.Tensor):
+        """Write dynamic_friction. If Stribeck is active, keep values cached but
+        set Newton's joint_friction to 0 (friction applied externally instead)."""
+        if _has_stribeck:
+            # Cache the values for external Stribeck computation; zero out Newton's
+            robot.write_joint_friction_coefficient_to_sim_index(
+                joint_friction_coeff=torch.zeros_like(vals),
+                joint_ids=arm_joint_ids_tensor, env_ids=_env_ids,
+            )
+        else:
+            robot.write_joint_friction_coefficient_to_sim_index(
+                joint_friction_coeff=vals, joint_ids=arm_joint_ids_tensor, env_ids=_env_ids,
+            )
+
+    # Cache for dynamic_friction values (needed for Stribeck torque computation)
+    _dynamic_friction_cache = None
+
+    def _cache_and_write_dynamic_friction(vals: torch.Tensor):
+        nonlocal _dynamic_friction_cache
+        _dynamic_friction_cache = vals.clone()
+        _write_dynamic_friction_maybe_disable(vals)
+
+    def _apply_stribeck_torque():
+        """Compute and apply Stribeck friction as external torque each sim step."""
+        if not _has_stribeck or _stribeck_velocity_cache is None or _dynamic_friction_cache is None:
+            return
+        vel = to_torch(robot.data.joint_vel)[:, arm_joint_ids]
+        # τ = -f_c * tanh(v / v_s)
+        friction_torque = -_dynamic_friction_cache * torch.tanh(vel / _stribeck_velocity_cache)
+        # Apply as external effort on arm joints
+        effort = to_torch(robot.data.joint_effort_target).clone()
+        effort[:, arm_joint_ids] = friction_torque
+        robot.set_joint_effort_target_index(target=effort)
+
     _PARAM_WRITERS = {
         "armature":          lambda vals: robot.write_joint_armature_to_sim_index(armature=vals, joint_ids=arm_joint_ids_tensor, env_ids=_env_ids),
-        "dynamic_friction":  lambda vals: robot.write_joint_friction_coefficient_to_sim_index(joint_friction_coeff=vals, joint_ids=arm_joint_ids_tensor, env_ids=_env_ids),
+        "dynamic_friction":  _cache_and_write_dynamic_friction,
         "viscous_friction":  _write_viscous_friction,
+        "stribeck_velocity": _cache_stribeck_velocity,
         "stiffness":         lambda vals: robot.write_joint_stiffness_to_sim_index(stiffness=vals, joint_ids=arm_joint_ids_tensor, env_ids=_env_ids),
         "damping":           lambda vals: robot.write_joint_damping_to_sim_index(damping=vals, joint_ids=arm_joint_ids_tensor, env_ids=_env_ids),
     }

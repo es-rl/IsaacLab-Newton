@@ -20,6 +20,9 @@ parameters:
   viscous_friction:
     lower: 0.0
     upper: 2.0
+  # stribeck_velocity:
+  #   lower: 0.01
+  #   upper: 2.0
 
   # Uncomment to also optimize PD gains per joint:
   stiffness:
@@ -32,8 +35,8 @@ parameters:
 # Fixed parameters (not optimized)
 fixed:
   # stiffness: 60.0       # kp
-  # damping: 1.5           # kd
-  motor_lag_ms: 35.6     # command delay (ms)
+  # damping: 1.5          # kd
+  motor_lag_ms: 10        # command delay (ms)
 
 # CMA-ES defaults (can be overridden via CLI)
 cmaes:

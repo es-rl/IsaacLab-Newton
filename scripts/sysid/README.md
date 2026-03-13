@@ -17,6 +17,22 @@ where:
 - **b** (`viscous_friction`) — passive viscous damping (Nm-s/rad)
 - **c** (`dynamic_friction`) — Coulomb friction torque (Nm)
 
+### Stribeck Friction (optional)
+
+When `stribeck_velocity` is included in the bounds YAML, Coulomb friction is
+replaced with a smooth Stribeck model applied as an external torque each step:
+
+    tau_friction = -c * tanh(v / v_s)
+
+where **v_s** (`stribeck_velocity`) controls the velocity-dependent transition.
+At `|v| >> v_s` this converges to standard Coulomb friction `±c`. Near `v ≈ 0`
+friction smoothly goes to zero instead of jumping discontinuously.
+
+When active, Newton's built-in `joint_friction` is zeroed and all Coulomb
+friction is handled externally. Viscous friction (`dof_passive_damping`) remains
+in the solver. When `stribeck_velocity` is commented out, the standard Coulomb
+model is used unchanged.
+
 ### Newton Property Mapping
 
 The simulator uses Newton physics with the MuJoCo Warp solver. Each sysid
@@ -29,11 +45,13 @@ parameter maps to a specific Newton model property:
 | `viscous_friction` | `model.mujoco.dof_passive_damping` | *(custom writer)* | Passive viscous damping F = -b·ω [N·m·s/rad] |
 | `stiffness` | `model.joint_target_ke` | `write_joint_stiffness_to_sim()` | PD position gain kp [N·m/rad] |
 | `damping` | `model.joint_target_kd` | `write_joint_damping_to_sim()` | PD velocity gain kd [N·m·s/rad] |
+| `stribeck_velocity` | *(external torque via `joint_f`)* | *(custom writer)* | Stribeck transition velocity [rad/s] |
 
 Notes:
 - `viscous_friction` writes directly to Newton's `mujoco.dof_passive_damping` custom attribute (no Isaac Lab API exists). This is a MuJoCo-solver-only property (default 0.0), separate from PD gains.
 - `stiffness` and `damping` are PD controller gains, not passive mechanical properties. They can be optimized alongside `viscous_friction`.
-- All 5 parameters can be used together in any combination.
+- `stribeck_velocity` replaces Newton's built-in Coulomb friction with a smooth `tanh(v/v_s)` model applied as an external torque each sim step. When active, `joint_friction` is zeroed.
+- All 6 parameters can be used together in any combination.
 
 Current per-joint values from CMA-ES sysid on right arm chirp data (h1_arm_implicit.yaml):
 
@@ -263,17 +281,18 @@ python scripts/sysid/run_sysid.py \
 
 ## What Gets Optimized
 
-Up to 5 motor properties per joint type (configured in bounds YAML):
+Up to 6 motor properties per joint type (configured in bounds YAML):
 
 | Symbol | YAML key | H1 Bounds | Description | Newton Property |
 |---|---|---|---|---|
 | J | `armature` | [0.001, 0.05] | Rotor inertia (kg·m²) | `joint_armature` |
 | c | `dynamic_friction` | [0.0, 1.0] | Coulomb friction (N·m) | `joint_friction` |
 | b | `viscous_friction` | [0.0, 2.0] | Passive viscous damping (N·m·s/rad) | `mujoco.dof_passive_damping` |
+| v_s | `stribeck_velocity` | *(commented)* [0.01, 2.0] | Stribeck transition velocity (rad/s) | external torque via `joint_f` |
 | kp | `stiffness` | *(commented)* | PD position gain (N·m/rad) | `joint_target_ke` |
 | kd | `damping` | *(commented)* | PD velocity gain (N·m·s/rad) | `joint_target_kd` |
 
-By default, J, c, b are optimized while kp and kd are fixed. Uncomment `stiffness` and/or `damping` in the bounds YAML to include PD gains in the optimization.
+By default, J, c, b are optimized while v_s, kp, and kd are commented out. Uncomment them in the bounds YAML to include in the optimization. When `stribeck_velocity` is active, Coulomb friction is applied externally as `τ = -c * tanh(v / v_s)` instead of through Newton's solver.
 
 Three bounds configs are available (in `input/run_configs/`):
 
@@ -333,14 +352,31 @@ Output: `gru_{joint}_stateful_best.pt` + `gru_{joint}_stateful_stats.json`
 
 ### Hybrid Residual GRU
 
-Instead of predicting full torque, the GRU learns only what the PD model cannot explain:
+Instead of predicting full torque, the GRU learns only what the physics model cannot explain:
 
-    tau_residual = tau_real - (kp * pos_error - kd * velocity)
+    tau_residual = tau_real - (kp * pos_error - kd * velocity) - c * sign(vel) - b * vel
 
-The PD model (kp, kd from the implicit actuator YAML) handles the bulk of the dynamics. Since the residual is much smaller than full torque, prediction errors compound far less during closed-loop simulation.
+The physics model (from the implicit actuator YAML) handles:
+- **PD torque**: `kp * pos_error - kd * velocity`
+- **Coulomb friction**: `dynamic_friction * sign(velocity)` (if non-zero in YAML)
+- **Viscous friction**: `viscous_friction * velocity` (if non-zero in YAML)
+
+Since the residual is much smaller than full torque, prediction errors compound far less during closed-loop simulation. The residual captures gravity, inertia effects, sensor bias, and other unmodeled dynamics.
+
+When using the sysid-identified YAML (`h1_arm_sysid_implicit.yaml`), friction is automatically subtracted from the residual. With the default YAML (`h1_arm_implicit.yaml` where friction values are zero), only PD torque is subtracted (original behavior).
+
+The residual's mean (stored in normalization stats) acts as an implicit **torque bias correction** — any constant offset between sim and real torque sensors is captured here and applied during inference.
 
 ```bash
-# Train hybrid residual model for elbow (quick, no Optuna)
+# Train with sysid params (subtracts PD + friction from residual)
+python scripts/sysid/train_model/hybrid_model_train.py \
+    --implicit-yaml input/actuator_models/h1/h1_arm_sysid_implicit.yaml \
+    --joint-type elbow \
+    --data-dirs "/path/to/SysID Position 0" "/path/to/SysID Position 3" \
+    --noise-std 0.02 \
+    --skip-optuna
+
+# Train with default params (subtracts PD only, friction=0)
 python scripts/sysid/train_model/hybrid_model_train.py \
     --implicit-yaml input/actuator_models/h1/h1_arm_implicit.yaml \
     --joint-type elbow \
@@ -350,7 +386,7 @@ python scripts/sysid/train_model/hybrid_model_train.py \
 
 # Train for shoulder pitch with Optuna search
 python scripts/sysid/train_model/hybrid_model_train.py \
-    --implicit-yaml input/actuator_models/h1/h1_arm_implicit.yaml \
+    --implicit-yaml input/actuator_models/h1/h1_arm_sysid_implicit.yaml \
     --joint-type shoulder_pitch \
     --data-dirs "/path/to/Config A" "/path/to/Config B" "/path/to/Config C" \
     --noise-std 0.01 \
@@ -359,7 +395,10 @@ python scripts/sysid/train_model/hybrid_model_train.py \
 
 Output: `hybrid_residual_{joint}_best.pt` + `hybrid_residual_{joint}_stats.json`
 
-The stats JSON is tagged with `"model_type": "hybrid_residual"` and includes the physics params (kp, kd) used to compute the residual, so downstream inference knows to add PD torque back.
+The stats JSON is tagged with `"model_type": "hybrid_residual"` and includes:
+- `physics_params`: kp, kd, armature, dynamic_friction, viscous_friction used during training
+- `subtract_friction`: whether friction terms were subtracted from the residual
+- `normalization`: per-column mean/std/p1/p99 (residual mean = torque bias)
 
 ### How Training Works
 
