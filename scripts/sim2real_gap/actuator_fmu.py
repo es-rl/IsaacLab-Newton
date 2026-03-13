@@ -244,16 +244,50 @@ class ActuatorNetFMU(IdealPDActuator):
                 new_time = self._time + self._step_size
                 inst.fmi2SetTime(inst.component, new_time)
 
-                # Euler step on continuous states
+                # RK4 step on continuous states
                 if self._nx > 0:
-                    x = (ctypes.c_double * self._nx)()
-                    dx = (ctypes.c_double * self._nx)()
-                    inst.fmi2GetContinuousStates(inst.component, x, self._nx)
-                    inst.fmi2GetDerivatives(inst.component, dx, self._nx)
-                    x_new = (ctypes.c_double * self._nx)(
-                        *(x[i] + self._step_size * dx[i] for i in range(self._nx))
+                    dt = self._step_size
+                    nx = self._nx
+
+                    x0 = (ctypes.c_double * nx)()
+                    inst.fmi2GetContinuousStates(inst.component, x0, nx)
+
+                    # k1 = f(t, x0)
+                    k1 = (ctypes.c_double * nx)()
+                    inst.fmi2GetDerivatives(inst.component, k1, nx)
+
+                    # k2 = f(t + dt/2, x0 + dt/2 * k1)
+                    x_tmp = (ctypes.c_double * nx)(
+                        *(x0[i] + 0.5 * dt * k1[i] for i in range(nx))
                     )
-                    inst.fmi2SetContinuousStates(inst.component, x_new, self._nx)
+                    inst.fmi2SetContinuousStates(inst.component, x_tmp, nx)
+                    inst.fmi2SetTime(inst.component, self._time + 0.5 * dt)
+                    k2 = (ctypes.c_double * nx)()
+                    inst.fmi2GetDerivatives(inst.component, k2, nx)
+
+                    # k3 = f(t + dt/2, x0 + dt/2 * k2)
+                    x_tmp = (ctypes.c_double * nx)(
+                        *(x0[i] + 0.5 * dt * k2[i] for i in range(nx))
+                    )
+                    inst.fmi2SetContinuousStates(inst.component, x_tmp, nx)
+                    k3 = (ctypes.c_double * nx)()
+                    inst.fmi2GetDerivatives(inst.component, k3, nx)
+
+                    # k4 = f(t + dt, x0 + dt * k3)
+                    x_tmp = (ctypes.c_double * nx)(
+                        *(x0[i] + dt * k3[i] for i in range(nx))
+                    )
+                    inst.fmi2SetContinuousStates(inst.component, x_tmp, nx)
+                    inst.fmi2SetTime(inst.component, new_time)
+                    k4 = (ctypes.c_double * nx)()
+                    inst.fmi2GetDerivatives(inst.component, k4, nx)
+
+                    # x_new = x0 + (dt/6) * (k1 + 2*k2 + 2*k3 + k4)
+                    x_new = (ctypes.c_double * nx)(
+                        *(x0[i] + (dt / 6.0) * (k1[i] + 2.0 * k2[i] + 2.0 * k3[i] + k4[i])
+                          for i in range(nx))
+                    )
+                    inst.fmi2SetContinuousStates(inst.component, x_new, nx)
 
                 # Read output
                 vr_out = (ctypes.c_uint32 * 1)(self._vr_torque_true)
