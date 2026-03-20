@@ -38,11 +38,13 @@ A detailed description of Isaac Lab can be found in our [arXiv paper](https://ar
 
 | Component | Version |
 |---|---|
-| Isaac Lab | 3.0.0 |
-| Isaac Sim | 6.0.0 |
+| Isaac Lab | [3.0.0 (develop branch)](https://github.com/isaac-sim/IsaacLab/tree/develop) |
+| Isaac Sim | [6.0.0](https://github.com/isaac-sim/IsaacSim) |
 | Newton | [release-1.0](https://github.com/newton-physics/newton/tree/release-1.0) |
 | MuJoCo | >= 3.5.0 |
 | MuJoCo Warp | >= 3.5.0 |
+
+> **Note:** Isaac Lab 3.0 is on the [`develop` branch](https://github.com/isaac-sim/IsaacLab/tree/develop), not `main`. It is currently only available on Ubuntu. Windows support and pip wheels are not yet available.
 
 ## Key Features
 

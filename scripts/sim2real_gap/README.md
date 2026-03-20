@@ -11,6 +11,42 @@ Based on: [SAGE](https://github.com/isaac-sim2real/sage)
 
 Plays back motion trajectories in simulation, records joint states as CSV, and compares them against real robot data. This integration adapts the upstream simulation module for the Newton physics engine (replacing PhysX) with some improvements to the process.
 
+## Quick Start (Teststand)
+
+Minimal single-motor environment (base cylinder + arm bar + revolute elbow joint) for actuator model validation. Uses the same M8010-6.333 motor as the H1 elbow.
+
+### 1. Configure data paths
+
+Edit `input/run_configs/teststand/teststand.yaml`:
+
+```yaml
+benchmark:
+  motion_files: input/motion_files/h1/motor_benchtop/SysID Position 0/chirp_type3
+  motion_name: chirp_type3_pos0
+
+actuator:
+  model_type: fmu
+  yaml_file: teststand/teststand_implicit.yaml
+  fmu_path: h1/nvidia-motor.fmu
+  fmu_step_size: 0.002
+```
+
+The teststand actuator YAML uses scalar values (no per-joint regex patterns) since there is only one joint (`elbow`).
+
+### 2. Run the benchmark
+
+Input data can be benchtop parquet files or motor CSVs — parquet files are auto-detected and converted.
+
+```bash
+python scripts/sim2real_gap/run_benchmark.py --robot-name teststand --headless
+```
+
+### 3. Run analysis
+
+```bash
+python scripts/sim2real_gap/run_analysis.py --robot-name teststand
+```
+
 ## Quick Start (H1)
 
 Most settings (motion files, output paths, actuator config) are in `input/run_configs/h1/h1.yaml`. Set them once and run scripts with minimal CLI args.
@@ -119,62 +155,47 @@ python scripts/sim2real_gap/run_analysis.py --robot-name ur10e
 
 Analysis produces per-joint comparison plots (with RMSE), boxplots, and a metrics Excel file (`metrics_summary.xlsx`). Output folders are suffixed with the actuator model type.
 
-## Quick Start (Teststand)
-
-Minimal single-motor environment (base cylinder + arm bar + revolute elbow joint) for actuator model validation. Uses the same M8010-6.333 motor as the H1 elbow.
-
-### 1. Configure data paths
-
-Edit `input/run_configs/teststand/teststand.yaml`:
-
-```yaml
-benchmark:
-  motion_files: input/motion_files/h1/motor_benchtop/SysID Position 0/chirp_type3
-  motion_name: chirp_type3_pos0
-
-actuator:
-  model_type: fmu
-  yaml_file: teststand/teststand_implicit.yaml
-  fmu_path: h1/nvidia-motor.fmu
-  fmu_step_size: 0.002
-```
-
-The teststand actuator YAML uses scalar values (no per-joint regex patterns) since there is only one joint (`elbow`).
-
-### 2. Run the benchmark
-
-Input data can be benchtop parquet files or motor CSVs — parquet files are auto-detected and converted.
-
-```bash
-python scripts/sim2real_gap/run_benchmark.py --robot-name teststand --headless
-```
-
-### 3. Run analysis
-
-```bash
-python scripts/sim2real_gap/run_analysis.py --robot-name teststand
-```
-
 ---
 
-## No-Sim Evaluation
+## Sim-in-the-loop vs. Open-loop (Real Data) Evaluation
 
-`run_nosim_eval.py` feeds real data directly through an actuator model without running Newton physics. This isolates the actuator model's accuracy from physics simulation effects (contact, integrator drift, etc.).
+`sim_vs_nosim_benchmark.py` compares open-loop performance of model by feeding real data directly through an actuator model without running Newton physics. This isolates the actuator model's accuracy from physics simulation effects (contact, integrator drift, etc.).
+
+Supported model types (same as the sim benchmark):
+
+| Model type | Description |
+|---|---|
+| `implicit` | Pure PD control: `kp * error - kd * vel` |
+| `dcmotor` | DC motor model (PD + saturation/effort limits) |
+| `lstm` / `gru` | Stateful LSTM/GRU neural network (single model for all joints) |
+| `lstm_perjoint` / `gru_perjoint` | Per-joint LSTM/GRU (separate model per joint type) |
+| `fmu` | FMI 2.0 CoSimulation FMU (Ansys Twin Builder) |
 
 ### Basic usage
 
 ```bash
 # Uses model type from run config (default: teststand)
-python scripts/sim2real_gap/run_nosim_eval.py --robot-name teststand
+python scripts/sim2real_gap/sim_vs_nosim_benchmark.py --robot-name teststand
+
+# Load config directly by path
+python scripts/sim2real_gap/sim_vs_nosim_benchmark.py \
+    --config input/run_configs/h1/h1.yaml \
+    --data-path input/motion_files/h1/motor_benchtop/SysID\ Position\ 0/chirp_type3
 
 # Explicit data path and model type
-python scripts/sim2real_gap/run_nosim_eval.py \
+python scripts/sim2real_gap/sim_vs_nosim_benchmark.py \
     --robot-name teststand \
     --data-dir input/motion_files/h1/motor_benchtop/SysID\ Position\ 0/chirp_type3 \
     --model-type fmu
 
+# LSTM/GRU model
+python scripts/sim2real_gap/sim_vs_nosim_benchmark.py \
+    --config input/run_configs/h1/h1.yaml \
+    --model-type lstm \
+    --network-file h1/gru_fullarm_elbow_stateful_best.pt
+
 # Override PD gains
-python scripts/sim2real_gap/run_nosim_eval.py --robot-name teststand --kp 60 --kd 1.5
+python scripts/sim2real_gap/sim_vs_nosim_benchmark.py --robot-name teststand --kp 60 --kd 1.5
 ```
 
 ### Three-way comparison (real vs no-sim vs sim-in-the-loop)
@@ -186,14 +207,23 @@ Run the benchmark first, then pass `--sim-results` to overlay sim-in-the-loop re
 python scripts/sim2real_gap/run_benchmark.py --robot-name teststand --headless
 
 # Step 2: run no-sim eval with sim overlay
-python scripts/sim2real_gap/run_nosim_eval.py \
+python scripts/sim2real_gap/sim_vs_nosim_benchmark.py \
     --robot-name teststand \
     --sim-results output/sim2real_benchmark
 ```
 
-Output: three-panel plots (torque overlay, error, scatter) and a `summary.csv` with RMSE metrics per file. Plots show real, no-sim model, PD baseline, and (when `--sim-results` is provided) sim-in-the-loop curves.
+### Output
 
-Supported model types: `implicit` (PD), `fmu` (CoSimulation). Accepts both parquet files (benchtop motor data) and motor CSVs.
+For each run, the script produces:
+
+- **Per-file PNG plots** — three-panel comparison (torque overlay, error, scatter) for each data file
+- **`summary.csv`** — RMSE metrics per file (no-sim, PD baseline, sim-in-the-loop if available)
+- **`report.pdf`** — PDF report containing:
+  - Title page with actuator config, simulation parameters, and software versions (Isaac Lab, Newton, Isaac Sim, fmpy, PyTorch, CUDA)
+  - Summary RMSE table with improvement percentages (color-coded)
+  - All per-file comparison plots
+
+Accepts both parquet files (benchtop motor data) and motor CSVs. When both formats exist for the same motion, parquets are preferred to avoid duplicate processing.
 
 ---
 
@@ -217,7 +247,7 @@ Robot selection is via `--robot-name`. Each robot has its own scene config class
 | `convert_ur10e_pkl.py` | Convert UR10e trajectory pickle to the expected format |
 | `../sysid/convert_h1_chirp_to_csv.py` | Convert H1 motor CSVs to benchmark/sysid format (supports position_error columns and chirp/sine filename reconstruction) |
 | `generate_sample_motion.py` | Generate a sample H1 motion file for testing |
-| `run_nosim_eval.py` | No-sim actuator model evaluation — feeds real data directly through the model (no physics). Supports three-way comparison: real vs no-sim vs sim-in-the-loop. |
+| `sim_vs_nosim_benchmark.py` | No-sim actuator model evaluation — feeds real data directly through any actuator model (implicit, dcmotor, lstm, fmu) without physics. Supports three-way comparison (real vs no-sim vs sim-in-the-loop) and generates a PDF report. |
 | `convert_benchtop_parquet.py` | Convert benchtop parquet files (single-motor) to `*_motor.csv` format with joint-prefixed columns |
 | `benchmark_fmu.py` | Standalone FMU torque benchmark — compares Ansys Twin Builder output vs real torque from parquet data. No Isaac Lab required. Supports pytwin and fmpy backends. |
 | `newton_benchmark.py` | Core `NewtonJointMotionBenchmark` class with per-robot scene configs |
