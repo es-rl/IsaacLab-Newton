@@ -40,6 +40,9 @@ _H1_LOCAL_USD = os.path.abspath(
 _UR10_LOCAL_USD = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "../../input/robot_models/ur10/ur10/ur10.usd")
 )
+_TESTSTAND_LOCAL_USD = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "../../input/robot_models/teststand/teststand.usda")
+)
 
 # Reuse SAGE's pure-Python utility functions
 from sage.simulation import get_motion_files, get_motion_name, log_message  # noqa: F401
@@ -485,6 +488,11 @@ _ROBOT_ARM_CFG = {
         "group_name": "arm",
         "model_subdir": "ur10e",
     },
+    "teststand": {
+        "joint_exprs": ["elbow"],
+        "group_name": "arm",
+        "model_subdir": "teststand",
+    },
 }
 
 
@@ -703,6 +711,44 @@ class Ur10eBenchmarkSceneCfg(InteractiveSceneCfg):
     )
 
 
+@configclass
+class TestStandBenchmarkSceneCfg(InteractiveSceneCfg):
+    """Scene with single motor teststand (base cylinder + arm bar + revolute elbow).
+
+    Mirrors the setup in scripts/newton_teststand/test_newton_viewer.py but
+    using Isaac Lab's InteractiveScene so it works with the benchmark pipeline.
+    """
+
+    ground = AssetBaseCfg(
+        prim_path="/World/ground",
+        spawn=sim_utils.GroundPlaneCfg(size=(100.0, 100.0)),
+    )
+
+    robot: ArticulationCfg = ArticulationCfg(
+        prim_path="{ENV_REGEX_NS}/Robot",
+        spawn=sim_utils.UsdFileCfg(
+            usd_path=_TESTSTAND_LOCAL_USD,
+            func=spawn_from_usd_with_fixed_base,
+        ),
+        init_state=ArticulationCfg.InitialStateCfg(
+            pos=(0.0, 0.0, 0.5),
+            joint_pos={"elbow": 0.0},
+            joint_vel={".*": 0.0},
+        ),
+        actuators={
+            "arm": load_implicit_actuator_cfg(
+                "teststand/teststand_implicit.yaml",
+                ["elbow"],
+            ),
+        },
+    )
+
+    dome_light = AssetBaseCfg(
+        prim_path="/World/DomeLight",
+        spawn=sim_utils.DomeLightCfg(color=(0.9, 0.9, 0.9), intensity=500.0),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Robot-specific benchmark configurations
 # ---------------------------------------------------------------------------
@@ -714,6 +760,10 @@ _BENCHMARK_ROBOT_CONFIGS = {
     "ur10e": {
         "scene_cfg_cls": Ur10eBenchmarkSceneCfg,
         "actuator_yaml": "ur10e/ur10e_implicit.yaml",
+    },
+    "teststand": {
+        "scene_cfg_cls": TestStandBenchmarkSceneCfg,
+        "actuator_yaml": "teststand/teststand_implicit.yaml",
     },
 }
 

@@ -61,8 +61,6 @@ def load_implicit_actuator_cfg(yaml_file: str, joint_names_expr: list[str]):
         damping=params["damping"],
         armature=params.get("armature"),
         friction=params.get("friction"),
-        dynamic_friction=params.get("dynamic_friction"),
-        viscous_friction=params.get("viscous_friction"),
     )
 
 
@@ -108,8 +106,8 @@ def load_fmu_actuator_cfg(
     """Load an ActuatorNetFMUCfg from a YAML file and FMU path.
 
     The YAML provides PD gains and limits (used for the internal PD torque
-    prediction). The FMU path points to the Ansys Twin Builder model that
-    corrects the PD output.
+    prediction). The FMU path points to a CoSimulation FMU (e.g. Nvidia
+    neural-ODE motor model) that corrects the PD output.
 
     Args:
         yaml_file: Filename (relative to actuator_models/) or absolute path.

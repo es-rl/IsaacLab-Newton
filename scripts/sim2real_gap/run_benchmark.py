@@ -167,6 +167,18 @@ def _write_run_summary(output_folder, robot_name, motion_source, run_cfg, args):
                 actuator_info["parameters"] = load_actuator_params(yaml_file)
             except Exception:
                 pass
+    elif mt == "fmu":
+        yaml_file = act_cfg.get("yaml_file")
+        if yaml_file:
+            actuator_info["yaml_file"] = yaml_file
+            try:
+                actuator_info["parameters"] = load_actuator_params(yaml_file)
+            except Exception:
+                pass
+        fmu_path = act_cfg.get("fmu_path")
+        if fmu_path:
+            actuator_info["fmu_path"] = fmu_path
+        actuator_info["fmu_step_size"] = act_cfg.get("fmu_step_size", 0.002)
     elif mt == "lstm":
         network_file = act_cfg.get("network_file")
         if network_file:
@@ -202,6 +214,57 @@ def _write_run_summary(output_folder, robot_name, motion_source, run_cfg, args):
     log_message(f"Run summary saved to {summary_path}")
 
 
+def _detect_motor_csv_joints(csv_path):
+    """Detect joint names from a motor CSV header.
+
+    Looks for columns matching ``<joint>_position`` and returns the list of
+    joint name prefixes found, in header order.
+    """
+    with open(csv_path) as f:
+        header = [c.strip() for c in f.readline().strip().split(",")]
+    joints = []
+    for col in header:
+        if col.endswith("_position") and col != "commanded_position":
+            joints.append(col.removesuffix("_position"))
+    return joints
+
+
+def _load_generic_motor_csv(csv_path, joints):
+    """Load a motor CSV with arbitrary joints.
+
+    Returns time_s, commands, positions, velocities, torques — all dicts keyed
+    by joint name.
+    """
+    import csv as csv_mod
+
+    import numpy as np
+
+    with open(csv_path) as f:
+        reader = csv_mod.DictReader(f)
+        rows = list(reader)
+
+    header_keys = set(rows[0].keys()) if rows else set()
+    time_s = np.array([float(r["time_s"]) for r in rows])
+
+    positions = {}
+    velocities = {}
+    torques = {}
+    commands = {}
+
+    for joint in joints:
+        positions[joint] = np.array([float(r[f"{joint}_position"]) for r in rows])
+        velocities[joint] = np.array([float(r[f"{joint}_velocity"]) for r in rows])
+        torques[joint] = np.array([float(r[f"{joint}_torque"]) for r in rows])
+
+        if f"{joint}_position_error" in header_keys:
+            pos_err = np.array([float(r[f"{joint}_position_error"]) for r in rows])
+            commands[joint] = positions[joint] + pos_err
+        else:
+            commands[joint] = positions[joint].copy()
+
+    return time_s, commands, positions, velocities, torques
+
+
 def prepare_motor_csv_data(data_dir, output_folder, robot_name, motion_source="custom"):
     """Convert motor CSVs to SAGE real data and motion files for sim.
 
@@ -210,14 +273,16 @@ def prepare_motor_csv_data(data_dir, output_folder, robot_name, motion_source="c
     - Converts to SAGE real format in output_folder/real/<robot>/<motion_source>/<motion_name>/
     - Creates a temp motion file (bare CSV of commanded positions) for sim playback
 
+    Auto-detects joint names from CSV headers, so works with any robot
+    (single-joint teststand, H1 arm, etc.).
+
     Returns list of (motion_file_path, motion_name, is_temp) tuples.
     """
+    import numpy as np
+
     from convert_h1_chirp_to_csv import (
-        CANONICAL_ORDER,
-        CSV_ORDER,
         find_motor_csvs,
         has_position_error,
-        load_csv_with_commands,
         write_sage_output,
     )
 
@@ -239,7 +304,11 @@ def prepare_motor_csv_data(data_dir, output_folder, robot_name, motion_source="c
         use_direct = has_position_error(os.path.join(dir_path, csvs[0]))
 
         if use_direct:
-            import numpy as np
+            # Detect joints from header of first CSV
+            joints = _detect_motor_csv_joints(os.path.join(dir_path, csvs[0]))
+            if not joints:
+                log_message(f"  SKIP {subdir_name}: no <joint>_position columns found")
+                continue
 
             # Per-file: each CSV becomes its own motion
             for fname in csvs:
@@ -247,7 +316,7 @@ def prepare_motor_csv_data(data_dir, output_folder, robot_name, motion_source="c
                 motion_name = fname.replace("_motor.csv", "")
                 motion_real_dir = os.path.join(real_dir, motion_name)
 
-                time_s, commands, positions, velocities, torques = load_csv_with_commands(path)
+                time_s, commands, positions, velocities, torques = _load_generic_motor_csv(path, joints)
                 t0 = time_s[0]
                 time_s = time_s - t0
                 dt = float(np.median(np.diff(time_s))) if len(time_s) > 1 else 0.005
@@ -260,23 +329,23 @@ def prepare_motor_csv_data(data_dir, output_folder, robot_name, motion_source="c
                     all_cmd_rows = []
                     all_state_rows = []
                     for k in range(len(time_s)):
-                        cmd_pos = [float(commands[j][k]) for j in CSV_ORDER]
-                        state_pos = [float(positions[j][k]) for j in CSV_ORDER]
-                        state_vel = [float(velocities[j][k]) for j in CSV_ORDER]
-                        state_torque = [float(torques[j][k]) for j in CSV_ORDER]
+                        cmd_pos = [float(commands[j][k]) for j in joints]
+                        state_pos = [float(positions[j][k]) for j in joints]
+                        state_vel = [float(velocities[j][k]) for j in joints]
+                        state_torque = [float(torques[j][k]) for j in joints]
                         all_cmd_rows.append((time_s[k], cmd_pos))
                         all_state_rows.append((time_s[k], state_pos, state_vel, state_torque))
 
-                    write_sage_output(motion_real_dir, all_cmd_rows, all_state_rows)
+                    write_sage_output(motion_real_dir, all_cmd_rows, all_state_rows, joint_order=joints)
                     log_message(f"  Converted {motion_name}: {len(time_s)} samples ({1/dt:.0f}Hz)")
 
                 # Create temp motion file for sim playback (bare CSV of commanded positions)
                 tmp = tempfile.NamedTemporaryFile(
                     mode="w", suffix=".txt", delete=False, prefix=f"motion_{motion_name}_"
                 )
-                tmp.write(",".join(CANONICAL_ORDER) + "\n")
+                tmp.write(",".join(joints) + "\n")
                 for k in range(len(time_s)):
-                    cmd_pos = [float(commands[j][k]) for j in CSV_ORDER]
+                    cmd_pos = [float(commands[j][k]) for j in joints]
                     tmp.write(",".join(f"{v}" for v in cmd_pos) + "\n")
                 tmp.close()
 
@@ -391,6 +460,31 @@ def _is_motor_csv_dir(path):
     return False
 
 
+def _is_parquet_dir(path):
+    """Check if path is a directory containing .parquet files."""
+    if not os.path.isdir(path):
+        return False
+    return any(f.endswith(".parquet") for f in os.listdir(path))
+
+
+def _convert_parquets_to_motor_csv(parquet_dir, joint_name="elbow"):
+    """Auto-convert parquet files in a directory to motor CSVs (in-place).
+
+    Returns the directory path (unchanged) after conversion.
+    """
+    from convert_benchtop_parquet import convert_parquet_to_motor_csv
+
+    parquets = sorted(
+        f for f in os.listdir(parquet_dir) if f.endswith(".parquet")
+    )
+    log_message(f"Auto-converting {len(parquets)} parquet files to motor CSVs")
+    for fname in parquets:
+        path = os.path.join(parquet_dir, fname)
+        csv_path = convert_parquet_to_motor_csv(path, joint_name, output_dir=parquet_dir)
+        log_message(f"  {fname} -> {os.path.basename(csv_path)}")
+    return parquet_dir
+
+
 def main():
     if args.real_control_csv and args.motion_files:
         raise ValueError("Specify either --motion-files or --real-control-csv, not both")
@@ -419,6 +513,31 @@ def main():
         # Clean up temp file if we created one
         if motion_file != args.real_control_csv:
             os.unlink(motion_file)
+
+    elif _is_parquet_dir(args.motion_files) and not _is_motor_csv_dir(args.motion_files):
+        # Auto-convert parquets to motor CSVs first, then proceed with motor CSV path
+        _convert_parquets_to_motor_csv(args.motion_files)
+        log_message(f"Detected motor CSVs in {args.motion_files} — auto-converting to SAGE format")
+        prepared = prepare_motor_csv_data(args.motion_files, args.output_folder, args.robot_name, args.motion_source)
+
+        if not prepared:
+            raise ValueError(f"No convertible motor CSVs found in {args.motion_files}")
+
+        log_message(f"Prepared {len(prepared)} motions for benchmark")
+
+        for motion_file, motion_name, is_temp in prepared:
+            try:
+                log_message(f"################### PROCESSING {motion_name} ###################")
+                benchmark.set_motion(motion_file, motion_name)
+                benchmark.run_benchmark()
+            except Exception as e:
+                log_message(f"Error processing {motion_name}: {str(e)}")
+                import traceback
+                traceback.print_exc()
+                continue
+            finally:
+                if is_temp:
+                    os.unlink(motion_file)
 
     elif _is_motor_csv_dir(args.motion_files):
         # Auto-convert motor CSVs: populate real/ folder and create motion files for sim

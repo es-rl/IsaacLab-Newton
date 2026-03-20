@@ -12,31 +12,11 @@ effort_limit_sim: 25.0          # N-m
 velocity_limit_sim: 13.5        # rad/s
 
 # PD gains
-stiffness: 60 #198.272598                 # kp
-damping: 1.5 #0.102012                   # kd
+stiffness: 60                  # kp
+damping: 1.5                   # kd
 
 # Command transport delay (not a physics param — applied as software buffer in scripts)
-motor_lag_ms: 35.6              # ms (measured from real H1)
-
-# Mechanical parameters — per-joint from CMA-ES sysid (right arm chirp experiments)
-# armature:
-#   ".*_shoulder_pitch": 0.001867
-#   ".*_shoulder_roll": 0.019726
-#   ".*_shoulder_yaw": 0.026347
-#   ".*_elbow": 0.001008 #0.021208
-
-# dynamic_friction:
-#   ".*_shoulder_pitch": 0.948609
-#   ".*_shoulder_roll": 0.8105
-#   ".*_shoulder_yaw": 0.606761
-#   ".*_elbow": 0.001485 #0.858461
-
-# viscous_friction:
-#   ".*_shoulder_pitch": 1.582401
-#   ".*_shoulder_roll": 1.878386
-#   ".*_shoulder_yaw": 1.502171
-#   ".*_elbow": 0.288743 #1.607976
-
+motor_lag_ms: 10              # ms 
 
 armature:
   ".*_shoulder_pitch": 0.0

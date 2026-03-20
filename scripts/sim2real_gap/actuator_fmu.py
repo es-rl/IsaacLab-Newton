@@ -3,21 +3,20 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""FMU-based hybrid actuator model.
+"""FMU-based hybrid actuator model (CoSimulation).
 
-Wraps an Ansys Twin Builder FMU (Functional Mock-up Unit) exported as an
-FMI 2.0 ModelExchange model.  The FMU takes joint position, velocity, and
+Wraps an FMI 2.0 CoSimulation FMU that takes joint position, velocity, and
 a PD-predicted torque as inputs, and outputs a corrected "true" torque.
+The FMU has its own internal solver and is advanced via ``doStep()``.
 
 Requires the ``fmpy`` package (``pip install fmpy``).
 """
 
 from __future__ import annotations
 
-import ctypes
 import logging
 import os
-from collections.abc import Sequence
+import sys
 from dataclasses import MISSING
 
 import numpy as np
@@ -26,8 +25,14 @@ import torch
 from isaaclab.utils import configclass
 from isaaclab.utils.types import ArticulationActions
 
-from isaaclab.actuators.actuator_pd import IdealPDActuator
-from isaaclab.actuators.actuator_pd_cfg import IdealPDActuatorCfg
+from isaaclab.actuators import IdealPDActuator, IdealPDActuatorCfg
+
+# Register this module under the isaaclab namespace so that FactoryBase's
+# __init_subclass__ check (requires cls.__module__ to start with "isaaclab")
+# accepts our actuator class without needing to live inside the isaaclab tree.
+_orig_module_name = __name__
+__name__ = "isaaclab.actuators.actuator_fmu"
+sys.modules[__name__] = sys.modules[_orig_module_name]
 
 logger = logging.getLogger(__name__)
 
@@ -40,19 +45,19 @@ logger = logging.getLogger(__name__)
 class ActuatorNetFMUCfg(IdealPDActuatorCfg):
     """Configuration for an FMU-based hybrid actuator model.
 
-    The FMU is expected to follow the Ansys Twin Builder convention:
+    The FMU is expected to expose these FMI variables:
 
     * **Inputs**: ``position`` [rad], ``velocity`` [rad/s], ``torque_pred`` [N-m]
     * **Output**: ``torque_true`` [N-m]
     """
 
-    class_type: type | str = "scripts.sim2real_gap.actuator_fmu:ActuatorNetFMU"
+    class_type: type | str = "isaaclab.actuators.actuator_fmu:ActuatorNetFMU"
 
     fmu_path: str = MISSING
-    """Path to the FMU directory (unzipped) or ``.fmu`` archive."""
+    """Path to the FMU ``.fmu`` archive or unzipped directory."""
 
     fmu_step_size: float = 0.002
-    """Communication step size [s] for the FMU solver. Should match the
+    """Communication step size [s] for ``doStep()``. Should match the
     physics dt of the simulation."""
 
 
@@ -61,16 +66,17 @@ class ActuatorNetFMUCfg(IdealPDActuatorCfg):
 # ---------------------------------------------------------------------------
 
 class ActuatorNetFMU(IdealPDActuator):
-    """Hybrid actuator that corrects PD torques through an FMU model.
+    """Hybrid actuator that corrects PD torques through a CoSimulation FMU.
 
     The compute flow is:
 
     1. Compute PD torque the same way as :class:`IdealPDActuator`.
     2. Feed ``(position, velocity, torque_pred)`` into the FMU.
-    3. Use the FMU output ``torque_true`` as the applied effort.
+    3. Call ``doStep()`` to advance the FMU's internal solver.
+    4. Use the FMU output ``torque_true`` as the applied effort.
 
-    One FMU instance is created per joint. Each instance maintains its own
-    internal solver state across timesteps (the FMU is stateful / dynamic).
+    One FMU instance is created per (env, joint). Each instance maintains
+    its own internal state across timesteps (the FMU is stateful / dynamic).
     """
 
     cfg: ActuatorNetFMUCfg
@@ -81,7 +87,6 @@ class ActuatorNetFMU(IdealPDActuator):
 
         try:
             import fmpy
-            from fmpy.fmi2 import FMU2Model  # noqa: F401
         except ImportError as e:
             raise ImportError(
                 f"fmpy is required for ActuatorNetFMU. Install with: pip install fmpy\n"
@@ -99,6 +104,13 @@ class ActuatorNetFMU(IdealPDActuator):
 
         # Read FMU model description once
         self._model_desc = fmpy.read_model_description(fmu_path)
+
+        # Validate that the FMU supports CoSimulation
+        if self._model_desc.coSimulation is None:
+            raise ValueError(
+                f"FMU at {fmu_path} does not support CoSimulation. "
+                f"Only CoSimulation FMUs are supported by ActuatorNetFMU."
+            )
 
         # Build variable reference maps
         self._vr_map = {}  # name -> valueReference
@@ -118,11 +130,7 @@ class ActuatorNetFMU(IdealPDActuator):
         self._vr_torque_pred = self._vr_map["torque_pred"]
         self._vr_torque_true = self._vr_map["torque_true"]
 
-        # Get number of continuous states from model description
-        self._nx = getattr(self._model_desc, "numberOfContinuousStates", 0) or 0
-
         # Create one FMU instance per (env, joint).
-        # For benchmark usage num_envs is typically 1.
         self._fmu_instances: list[list] = []  # [env][joint]
         self._time = 0.0
 
@@ -134,14 +142,14 @@ class ActuatorNetFMU(IdealPDActuator):
             self._fmu_instances.append(env_instances)
 
         logger.info(
-            f"ActuatorNetFMU: loaded {self._num_envs * self.num_joints} FMU instances "
-            f"from {fmu_path}"
+            f"ActuatorNetFMU [CoSimulation]: loaded "
+            f"{self._num_envs * self.num_joints} FMU instances from {fmu_path}"
         )
 
     def _create_fmu_instance(self):
-        """Create and initialize a single FMU ModelExchange instance."""
+        """Create and initialize a single CoSimulation FMU instance."""
         from fmpy import extract
-        from fmpy.fmi2 import FMU2Model
+        from fmpy.fmi2 import FMU2Slave
 
         # Extract if it's a .fmu file; if directory, use directly
         if os.path.isdir(self._fmu_path):
@@ -149,21 +157,15 @@ class ActuatorNetFMU(IdealPDActuator):
         else:
             unzip_dir = extract(self._fmu_path)
 
-        guid = self._model_desc.guid
-        model_id = self._model_desc.modelExchange.modelIdentifier
-
-        instance = FMU2Model(
-            guid=guid,
+        instance = FMU2Slave(
+            guid=self._model_desc.guid,
             unzipDirectory=unzip_dir,
-            modelIdentifier=model_id,
+            modelIdentifier=self._model_desc.coSimulation.modelIdentifier,
         )
         instance.instantiate()
         instance.setupExperiment(startTime=0.0)
         instance.enterInitializationMode()
         instance.exitInitializationMode()
-        # Enter continuous-time mode for ModelExchange
-        instance.enterContinuousTimeMode()
-        instance.fmi2SetTime(instance.component, 0.0)
 
         return instance
 
@@ -187,7 +189,6 @@ class ActuatorNetFMU(IdealPDActuator):
 
     def reset(self, env_ids):
         """Reset FMU instances for specified environments."""
-        # env_ids may be a slice (e.g. slice(None) for all envs) or a sequence
         if isinstance(env_ids, slice):
             env_ids = range(*env_ids.indices(self._num_envs))
         for env_id in env_ids:
@@ -229,71 +230,19 @@ class ActuatorNetFMU(IdealPDActuator):
             for j_idx in range(self.num_joints):
                 inst = self._fmu_instances[env_idx][j_idx]
 
-                # Set inputs via FMI2 C API
-                vrs = (ctypes.c_uint32 * 3)(
-                    self._vr_position, self._vr_velocity, self._vr_torque_pred
+                # Set inputs
+                inst.setReal([self._vr_position], [float(pos_np[env_idx, j_idx])])
+                inst.setReal([self._vr_velocity], [float(vel_np[env_idx, j_idx])])
+                inst.setReal([self._vr_torque_pred], [float(pd_np[env_idx, j_idx])])
+
+                # Advance the FMU's internal solver
+                inst.doStep(
+                    currentCommunicationPoint=self._time,
+                    communicationStepSize=self._step_size,
                 )
-                vals = (ctypes.c_double * 3)(
-                    float(pos_np[env_idx, j_idx]),
-                    float(vel_np[env_idx, j_idx]),
-                    float(pd_np[env_idx, j_idx]),
-                )
-                inst.fmi2SetReal(inst.component, vrs, 3, vals)
-
-                # Advance time
-                new_time = self._time + self._step_size
-                inst.fmi2SetTime(inst.component, new_time)
-
-                # RK4 step on continuous states
-                if self._nx > 0:
-                    dt = self._step_size
-                    nx = self._nx
-
-                    x0 = (ctypes.c_double * nx)()
-                    inst.fmi2GetContinuousStates(inst.component, x0, nx)
-
-                    # k1 = f(t, x0)
-                    k1 = (ctypes.c_double * nx)()
-                    inst.fmi2GetDerivatives(inst.component, k1, nx)
-
-                    # k2 = f(t + dt/2, x0 + dt/2 * k1)
-                    x_tmp = (ctypes.c_double * nx)(
-                        *(x0[i] + 0.5 * dt * k1[i] for i in range(nx))
-                    )
-                    inst.fmi2SetContinuousStates(inst.component, x_tmp, nx)
-                    inst.fmi2SetTime(inst.component, self._time + 0.5 * dt)
-                    k2 = (ctypes.c_double * nx)()
-                    inst.fmi2GetDerivatives(inst.component, k2, nx)
-
-                    # k3 = f(t + dt/2, x0 + dt/2 * k2)
-                    x_tmp = (ctypes.c_double * nx)(
-                        *(x0[i] + 0.5 * dt * k2[i] for i in range(nx))
-                    )
-                    inst.fmi2SetContinuousStates(inst.component, x_tmp, nx)
-                    k3 = (ctypes.c_double * nx)()
-                    inst.fmi2GetDerivatives(inst.component, k3, nx)
-
-                    # k4 = f(t + dt, x0 + dt * k3)
-                    x_tmp = (ctypes.c_double * nx)(
-                        *(x0[i] + dt * k3[i] for i in range(nx))
-                    )
-                    inst.fmi2SetContinuousStates(inst.component, x_tmp, nx)
-                    inst.fmi2SetTime(inst.component, new_time)
-                    k4 = (ctypes.c_double * nx)()
-                    inst.fmi2GetDerivatives(inst.component, k4, nx)
-
-                    # x_new = x0 + (dt/6) * (k1 + 2*k2 + 2*k3 + k4)
-                    x_new = (ctypes.c_double * nx)(
-                        *(x0[i] + (dt / 6.0) * (k1[i] + 2.0 * k2[i] + 2.0 * k3[i] + k4[i])
-                          for i in range(nx))
-                    )
-                    inst.fmi2SetContinuousStates(inst.component, x_new, nx)
 
                 # Read output
-                vr_out = (ctypes.c_uint32 * 1)(self._vr_torque_true)
-                val_out = (ctypes.c_double * 1)()
-                inst.fmi2GetReal(inst.component, vr_out, 1, val_out)
-                output[env_idx, j_idx] = val_out[0]
+                output[env_idx, j_idx] = inst.getReal([self._vr_torque_true])[0]
 
         self._time += self._step_size
 
