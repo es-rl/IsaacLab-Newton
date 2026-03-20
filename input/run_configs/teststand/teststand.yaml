@@ -1,0 +1,45 @@
+# Teststand runtime configuration
+# Single motor + arm bar — minimal env for actuator model validation.
+# CLI arguments override values set here.
+
+simulation:
+  physics_freq: 500         # Hz
+  control_freq: 500         # Hz
+  render_freq: 500          # Hz
+  integrator: implicitfast  # Newton solver integrator
+  solver_iterations: 10     # Newton solver iterations
+  ls_iterations: 10         # Newton line-search iterations
+
+#-------------------------------------------------------------------------------------
+benchmark:
+  fix_root: true
+  buffer_time: 2.0           # seconds — settle before motion playback
+  motor_lag_ms: null         # null = read from actuator YAML
+  kp: null                   # null = use actuator YAML defaults
+  kd: null
+
+  # Motion data
+  motion_files: "input/motion_files/h1/motor_benchtop/SysID Position 0/chirp_type3"
+  original_control_freq: null
+  motion_name: chirp_type3_pos0
+
+  # Output paths
+  output_folder: output/sim2real_benchmark
+
+#-------------------------------------------------------------------------------------
+analysis:
+  output_dir: output/sim2real_analysis
+  sample_dt: 0.005
+  motion_names: "*elbow*"
+
+#-------------------------------------------------------------------------------------
+# Actuator model for the teststand elbow joint.
+# model_type: implicit | dcmotor | lstm | lstm_perjoint | fmu
+# yaml_file and network_file/fmu_path paths are relative to input/actuator_models/
+
+  # --- For FMU hybrid model (CoSimulation): ---
+actuator:
+  model_type: fmu
+  yaml_file: teststand/teststand_implicit.yaml  # PD gains for torque_pred input
+  fmu_path: h1/nvidia-motor.fmu                # CoSimulation FMU (.fmu archive)
+  fmu_step_size: 0.002                          # should match physics dt

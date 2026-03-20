@@ -1,0 +1,17 @@
+# Teststand motor parameters (same M8010-6.333 as H1 elbow)
+#
+# Scalar values — single joint, no per-joint regex patterns needed.
+
+# Effort/velocity limits
+effort_limit_sim: 25.0          # N-m
+velocity_limit_sim: 13.5        # rad/s
+
+# PD gains
+stiffness: 60                  # kp
+damping: 1.5                   # kd
+
+# Command transport delay
+motor_lag_ms: 10               # ms
+
+# Mechanical parameters (all zero = no sysid tuning applied yet)
+armature: 0.0
