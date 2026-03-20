@@ -5,9 +5,18 @@
 
 """FMU-based hybrid actuator model (CoSimulation).
 
-Wraps an FMI 2.0 CoSimulation FMU that takes joint position, velocity, and
-a PD-predicted torque as inputs, and outputs a corrected "true" torque.
-The FMU has its own internal solver and is advanced via ``doStep()``.
+Wraps an FMI 2.0 CoSimulation FMU that takes joint position, commanded
+position, and a PD-predicted torque as inputs, and outputs a corrected
+"true" torque.  The FMU has its own internal solver and is advanced via
+``doStep()``.
+
+.. note::
+    The FMU's variable names (``position``, ``velocity``, ``torque_pred``)
+    follow the Ansys Twin Builder training convention where the
+    ``velocity`` slot actually carries the **commanded position** [rad],
+    not angular velocity.  ``torque_pred`` is the Unitree controller's
+    estimated torque; in sim we approximate it with PD torque
+    (``kp * position_error - kd * velocity``).
 
 Requires the ``fmpy`` package (``pip install fmpy``).
 """
@@ -47,7 +56,8 @@ class ActuatorNetFMUCfg(IdealPDActuatorCfg):
 
     The FMU is expected to expose these FMI variables:
 
-    * **Inputs**: ``position`` [rad], ``velocity`` [rad/s], ``torque_pred`` [N-m]
+    * **Inputs**: ``position`` [rad], ``velocity`` (commanded position [rad]),
+      ``torque_pred`` (kp * position_error [N-m])
     * **Output**: ``torque_true`` [N-m]
     """
 
@@ -206,6 +216,11 @@ class ActuatorNetFMU(IdealPDActuator):
     ) -> ArticulationActions:
         """Compute torques: PD prediction fed through FMU for correction.
 
+        The FMU was trained with Ansys Twin Builder convention where:
+        - ``position`` = actual joint position
+        - ``velocity`` = **commanded position** (not angular velocity)
+        - ``torque_pred`` = PD torque (approximation of Unitree controller estimate)
+
         Args:
             control_action: The joint action instance.
             joint_pos: Current joint positions [rad]. Shape is (num_envs, num_joints).
@@ -214,26 +229,31 @@ class ActuatorNetFMU(IdealPDActuator):
         Returns:
             The computed control action with corrected joint efforts.
         """
-        # Step 1: compute PD torque (same as IdealPDActuator)
+        # Step 1: compute torque_pred as PD torque (kp * pos_error - kd * vel).
+        # The FMU was trained with the Unitree controller's torque estimate as
+        # torque_pred; PD is our best approximation in sim-in-the-loop.
         error_pos = control_action.joint_positions - joint_pos
-        error_vel = control_action.joint_velocities - joint_vel
-        pd_torque = self.stiffness * error_pos + self.damping * error_vel + control_action.joint_efforts
+        torque_pred = self.stiffness * error_pos - self.damping * joint_vel
 
         # Step 2: feed through FMU instances (CPU / numpy)
+        # FMU input mapping (Ansys Twin Builder convention):
+        #   "position"    <- actual joint position
+        #   "velocity"    <- commanded position (NOT angular velocity)
+        #   "torque_pred" <- PD torque (best approx of Unitree controller estimate)
         pos_np = joint_pos.detach().cpu().numpy()
-        vel_np = joint_vel.detach().cpu().numpy()
-        pd_np = pd_torque.detach().cpu().numpy()
+        cmd_np = control_action.joint_positions.detach().cpu().numpy()
+        tp_np = torque_pred.detach().cpu().numpy()
 
-        output = np.zeros_like(pd_np)
+        output = np.zeros_like(tp_np)
 
         for env_idx in range(self._num_envs):
             for j_idx in range(self.num_joints):
                 inst = self._fmu_instances[env_idx][j_idx]
 
-                # Set inputs
+                # Set inputs (Ansys convention: "velocity" = commanded position)
                 inst.setReal([self._vr_position], [float(pos_np[env_idx, j_idx])])
-                inst.setReal([self._vr_velocity], [float(vel_np[env_idx, j_idx])])
-                inst.setReal([self._vr_torque_pred], [float(pd_np[env_idx, j_idx])])
+                inst.setReal([self._vr_velocity], [float(cmd_np[env_idx, j_idx])])
+                inst.setReal([self._vr_torque_pred], [float(tp_np[env_idx, j_idx])])
 
                 # Advance the FMU's internal solver
                 inst.doStep(
