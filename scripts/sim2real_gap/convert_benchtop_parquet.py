@@ -36,16 +36,18 @@ def convert_parquet_to_motor_csv(parquet_path: str, joint_name: str, output_dir:
     """
     df = pd.read_parquet(parquet_path)
 
-    # Normalize timestamps: benchtop parquets use microseconds (large integers)
-    time_col = df["time"].values
-    if time_col[-1] > 1e6:
-        time_s = time_col / 1e6
-    else:
-        time_s = time_col
+    # Normalize timestamps to seconds.
+    # Benchtop parquets may use nanoseconds or microseconds (large integers).
+    time_s = df["time"].values.astype(float)
+    time_s = time_s - time_s[0]
+    if time_s[-1] > 1e6:
+        time_s = time_s / 1e6
+    if time_s[-1] > 1e3:
+        time_s = time_s / 1e3
 
     # Build motor CSV with joint-prefixed columns
     out = pd.DataFrame()
-    out["time_s"] = time_s - time_s[0]
+    out["time_s"] = time_s
     out[f"{joint_name}_position"] = df["position"]
     if "position_error" in df.columns:
         out[f"{joint_name}_position_error"] = df["position_error"]

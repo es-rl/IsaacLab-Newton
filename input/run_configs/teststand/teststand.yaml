@@ -3,9 +3,9 @@
 # CLI arguments override values set here.
 
 simulation:
-  physics_freq: 500         # Hz
-  control_freq: 500         # Hz
-  render_freq: 500          # Hz
+  physics_freq: 2000         # Hz
+  control_freq: 2000         # Hz
+  render_freq: 2000          # Hz
   integrator: implicitfast  # Newton solver integrator
   solver_iterations: 10     # Newton solver iterations
   ls_iterations: 10         # Newton line-search iterations
@@ -29,7 +29,7 @@ benchmark:
 #-------------------------------------------------------------------------------------
 analysis:
   output_dir: output/sim2real_analysis
-  sample_dt: 0.005
+  sample_dt: 0.0005
   motion_names: "*elbow*"
 
 #-------------------------------------------------------------------------------------
@@ -40,6 +40,6 @@ analysis:
   # --- For FMU hybrid model (CoSimulation): ---
 actuator:
   model_type: fmu
-  yaml_file: teststand/teststand_implicit.yaml  # PD gains for torque_pred input
-  fmu_path: h1/nvidia-motor.fmu                # CoSimulation FMU (.fmu archive)
-  fmu_step_size: 0.002                          # should match physics dt
+  yaml_file: teststand/teststand_implicit.yaml   # PD gains for torque_pred input
+  fmu_path: h1/nvidia-motor.fmu                  # CoSimulation FMU (.fmu archive)
+  fmu_step_size: 0.0005                          # should match physics dt
