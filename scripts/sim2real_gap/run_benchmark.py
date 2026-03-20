@@ -485,104 +485,118 @@ def _convert_parquets_to_motor_csv(parquet_dir, joint_name="elbow"):
     return parquet_dir
 
 
+def _run_motions(benchmark, motions, temp_files):
+    """Run a list of (motion_file, motion_name) pairs, batched or sequential.
+
+    Uses batched parallel execution when there are multiple motions and the
+    benchmark was created with matching num_envs. Falls back to sequential
+    for single motions or on error.
+
+    Args:
+        benchmark: NewtonJointMotionBenchmark instance.
+        motions: list of (motion_file, motion_name) tuples.
+        temp_files: set of motion_file paths to delete after processing.
+    """
+    n = len(motions)
+
+    if n > 1 and benchmark._num_envs == n:
+        # Batched parallel execution
+        log_message(f"################### RUNNING {n} MOTIONS IN PARALLEL ###################")
+        try:
+            benchmark.run_benchmark_batch(motions)
+        except Exception as e:
+            log_message(f"Batch execution failed: {e}")
+            import traceback
+            traceback.print_exc()
+            log_message("Falling back to sequential execution...")
+            for motion_file, motion_name in motions:
+                try:
+                    log_message(f"################### PROCESSING {motion_name} ###################")
+                    benchmark.set_motion(motion_file, motion_name)
+                    benchmark.run_benchmark()
+                except Exception as e2:
+                    log_message(f"Error processing {motion_name}: {e2}")
+                    import traceback
+                    traceback.print_exc()
+    else:
+        # Sequential execution
+        for motion_file, motion_name in motions:
+            try:
+                log_message(f"################### PROCESSING {motion_name} ###################")
+                benchmark.set_motion(motion_file, motion_name)
+                benchmark.run_benchmark()
+            except Exception as e:
+                log_message(f"Error processing {motion_name}: {str(e)}")
+                import traceback
+                traceback.print_exc()
+                continue
+
+    # Clean up temp files
+    for motion_file, _ in motions:
+        if motion_file in temp_files:
+            os.unlink(motion_file)
+
+
 def main():
     if args.real_control_csv and args.motion_files:
         raise ValueError("Specify either --motion-files or --real-control-csv, not both")
     if not args.real_control_csv and not args.motion_files:
         raise ValueError("Must specify either --motion-files or --real-control-csv")
 
-    benchmark = NewtonJointMotionBenchmark(args)
-
-    _write_run_summary(args.output_folder, args.robot_name, args.motion_source, _run_cfg, args)
+    # --- Collect all motions first so we know how many envs to create ---
+    motions = []  # list of (motion_file, motion_name)
+    temp_files = set()  # motion files to clean up after
 
     if args.real_control_csv:
-        # Replay real robot commands in simulation
         motion_file, detected_freq = control_csv_to_motion_file(args.real_control_csv)
 
-        # Auto-set original_control_freq from CSV timestamps if not provided by user
         if detected_freq is not None and args.original_control_freq is None:
             args.original_control_freq = detected_freq
-            benchmark.original_control_freq = detected_freq
             log_message(f"Auto-set --original-control-freq {detected_freq:.1f} from control.csv timestamps")
 
         motion_name = args.motion_name or get_motion_name(args.real_control_csv)
-        log_message(f"################### REPLAYING REAL COMMANDS: {motion_name} ###################")
-        benchmark.set_motion(motion_file, motion_name)
-        benchmark.run_benchmark()
-
-        # Clean up temp file if we created one
+        motions.append((motion_file, motion_name))
         if motion_file != args.real_control_csv:
-            os.unlink(motion_file)
+            temp_files.add(motion_file)
 
     elif _is_parquet_dir(args.motion_files) and not _is_motor_csv_dir(args.motion_files):
-        # Auto-convert parquets to motor CSVs first, then proceed with motor CSV path
         _convert_parquets_to_motor_csv(args.motion_files)
         log_message(f"Detected motor CSVs in {args.motion_files} — auto-converting to SAGE format")
         prepared = prepare_motor_csv_data(args.motion_files, args.output_folder, args.robot_name, args.motion_source)
-
         if not prepared:
             raise ValueError(f"No convertible motor CSVs found in {args.motion_files}")
-
-        log_message(f"Prepared {len(prepared)} motions for benchmark")
-
         for motion_file, motion_name, is_temp in prepared:
-            try:
-                log_message(f"################### PROCESSING {motion_name} ###################")
-                benchmark.set_motion(motion_file, motion_name)
-                benchmark.run_benchmark()
-            except Exception as e:
-                log_message(f"Error processing {motion_name}: {str(e)}")
-                import traceback
-                traceback.print_exc()
-                continue
-            finally:
-                if is_temp:
-                    os.unlink(motion_file)
+            motions.append((motion_file, motion_name))
+            if is_temp:
+                temp_files.add(motion_file)
 
     elif _is_motor_csv_dir(args.motion_files):
-        # Auto-convert motor CSVs: populate real/ folder and create motion files for sim
         log_message(f"Detected motor CSVs in {args.motion_files} — auto-converting to SAGE format")
         prepared = prepare_motor_csv_data(args.motion_files, args.output_folder, args.robot_name, args.motion_source)
-
         if not prepared:
             raise ValueError(f"No convertible motor CSVs found in {args.motion_files}")
-
-        log_message(f"Prepared {len(prepared)} motions for benchmark")
-
         for motion_file, motion_name, is_temp in prepared:
-            try:
-                log_message(f"################### PROCESSING {motion_name} ###################")
-                benchmark.set_motion(motion_file, motion_name)
-                benchmark.run_benchmark()
-            except Exception as e:
-                log_message(f"Error processing {motion_name}: {str(e)}")
-                import traceback
-                traceback.print_exc()
-                continue
-            finally:
-                if is_temp:
-                    os.unlink(motion_file)
+            motions.append((motion_file, motion_name))
+            if is_temp:
+                temp_files.add(motion_file)
 
     else:
-        # Standard motion file playback
-        motion_files = get_motion_files(args.motion_files)
-        if not motion_files:
+        motion_files_list = get_motion_files(args.motion_files)
+        if not motion_files_list:
             raise ValueError(f"No motion files found in {args.motion_files}")
+        for motion_file in motion_files_list:
+            motion_name = get_motion_name(motion_file)
+            motions.append((motion_file, motion_name))
 
-        log_message(f"Found {len(motion_files)} motion files to process")
+    log_message(f"Prepared {len(motions)} motions for benchmark")
 
-        for motion_file in motion_files:
-            try:
-                motion_name = get_motion_name(motion_file)
-                log_message(f"################### PROCESSING {motion_file} ###################")
-                benchmark.set_motion(motion_file, motion_name)
-                benchmark.run_benchmark()
-            except Exception as e:
-                log_message(f"Error processing {motion_file}: {str(e)}")
-                import traceback
+    # Create benchmark with num_envs matching motion count for parallel execution
+    num_envs = len(motions) if len(motions) > 1 else 1
+    benchmark = NewtonJointMotionBenchmark(args, num_envs=num_envs)
 
-                traceback.print_exc()
-                continue
+    _write_run_summary(args.output_folder, args.robot_name, args.motion_source, _run_cfg, args)
+
+    _run_motions(benchmark, motions, temp_files)
 
     benchmark.log_joint_properties()
 

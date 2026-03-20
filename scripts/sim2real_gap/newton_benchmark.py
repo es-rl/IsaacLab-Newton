@@ -16,6 +16,7 @@ import numpy as np
 import torch
 import warp as wp
 from scipy.interpolate import interp1d
+from tqdm import tqdm
 
 import isaaclab.sim as sim_utils
 
@@ -776,7 +777,7 @@ class NewtonJointMotionBenchmark:
     as ManagerBasedRLEnv (scene.write_data_to_sim / sim.step / scene.update).
     """
 
-    def __init__(self, args):
+    def __init__(self, args, num_envs=1):
         self.robot_name = args.robot_name.lower()
         self.motion_source = args.motion_source.lower()
         self.valid_joints_file = args.valid_joints_file
@@ -790,6 +791,7 @@ class NewtonJointMotionBenchmark:
         self.kd = args.kd
         self.record_video = args.record_video
         self.headless = args.headless
+        self._num_envs = num_envs
 
         # Load per-robot run config for solver/buffer settings
         from run_configs import load_run_cfg
@@ -876,7 +878,7 @@ class NewtonJointMotionBenchmark:
                 f"Unknown robot '{self.robot_name}'. "
                 f"Available: {list(_BENCHMARK_ROBOT_CONFIGS.keys())}"
             )
-        scene_cfg = robot_cfg["scene_cfg_cls"](num_envs=1, env_spacing=4.0)
+        scene_cfg = robot_cfg["scene_cfg_cls"](num_envs=self._num_envs, env_spacing=4.0)
 
         # Override arm actuators from run config (actuator section)
         new_arm = _build_arm_actuators(self._run_cfg, self.robot_name)
@@ -1264,32 +1266,40 @@ class NewtonJointMotionBenchmark:
             for joint in self.joint_names:
                 file.write(f"{joint}\n")
 
-        # Initialize control log
-        with open(self.control_file, "w", newline="") as f:
-            writer = csv.writer(f)
-            writer.writerow(["type", "timestamp", "positions"])
-
-        # Initialize state motor log
-        with open(self.dof_file, "w", newline="") as f:
-            writer = csv.writer(f)
-            writer.writerow(["type", "timestamp", "positions", "velocities", "torques"])
+        # In-memory buffers for CSV rows — flushed to disk in _flush_logs()
+        self._control_rows = []
+        self._state_rows = []
 
     def _log_state(self, time, command_positions, actual_positions, actual_velocities, actual_efforts):
-        """Log current robot state to CSV in SAGE-compatible format.
+        """Buffer a row of robot state for later CSV flush.
 
         Timestamps are converted to microseconds to match the real robot's
         SAGE format (convert_h1_chirp_to_csv.py writes timestamps in µs).
         """
         ts_us = time * 1e6  # seconds -> microseconds
-        with open(self.control_file, "a", newline="") as f:
-            writer = csv.writer(f)
-            writer.writerow(["CONTROL", f"{ts_us:.1f}", command_positions.tolist()])
-
-        with open(self.dof_file, "a", newline="") as f:
-            writer = csv.writer(f)
-            writer.writerow(
-                ["STATE_MOTOR", f"{ts_us:.1f}", actual_positions.tolist(), actual_velocities.tolist(), actual_efforts.tolist()]
+        self._control_rows.append(
+            ["CONTROL", f"{ts_us:.1f}", command_positions.tolist()]
+        )
+        self._state_rows.append(
+            ["STATE_MOTOR", f"{ts_us:.1f}", actual_positions.tolist(),
+             actual_velocities.tolist(), actual_efforts.tolist()]
             )
+
+    def _flush_logs(self):
+        """Write buffered CSV rows to disk in one batch."""
+        with open(self.control_file, "w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(["type", "timestamp", "positions"])
+            writer.writerows(self._control_rows)
+
+        with open(self.dof_file, "w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(["type", "timestamp", "positions", "velocities", "torques"])
+            writer.writerows(self._state_rows)
+
+        log_message(f"Flushed {len(self._control_rows)} control + {len(self._state_rows)} state rows to CSV")
+        self._control_rows.clear()
+        self._state_rows.clear()
 
     def run_benchmark(self):
         """Run motion playback benchmark under Newton physics."""
@@ -1313,7 +1323,11 @@ class NewtonJointMotionBenchmark:
         initial_pos = joint_pos[0, self.joint_indices].cpu().numpy()
         motion_start_pos = np.array([joint_angles[j][0] for j in range(num_joints)])
 
-        log_message(f"Starting initialization phase with {BUFFER_TIME}s buffer...")
+        total_steps = buffer_control_steps * self.divisor + num_steps * self.divisor
+        pbar = tqdm(
+            total=total_steps, desc=self.motion_name, unit="step",
+            bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]",
+        )
 
         for step in range(buffer_control_steps * self.divisor):
             ctrl_step = step // self.divisor
@@ -1330,16 +1344,15 @@ class NewtonJointMotionBenchmark:
                 self.robot.set_joint_position_target(target)
 
             self._sim_step()
+            pbar.update(1)
 
         buffer_end_time = self._sim_time
 
         joint_pos = self._to_torch(self.robot.data.joint_pos)
         current_pos = joint_pos[0, self.joint_indices].cpu().numpy()
-        log_message(
-            f"Buffer completed in {BUFFER_TIME:.2f}s. "
-            f"Joint positions set to (rad): {list(current_pos)}"
+        tqdm.write(
+            f"[Benchmark] Buffer done. Starting motion ({num_steps} control steps)..."
         )
-        log_message("Initialization complete. Starting main motion...")
 
         # --- Command delay buffer ---
         # Delays position targets by self.motor_lag_steps physics steps to model
@@ -1354,54 +1367,264 @@ class NewtonJointMotionBenchmark:
             cmd_buffer = None
 
         # --- Main motion playback ---
+        # Pre-build joint angle array as contiguous numpy for fast indexing
+        joint_angles_arr = np.array(
+            [[joint_angles[j][i] for j in range(num_joints)] for i in range(num_steps)],
+            dtype=np.float64,
+        )
+
+        # Pre-allocate target tensor (reused every control step)
+        target_tensor = self._to_torch(self.robot.data.joint_pos).clone()
+        joint_indices_cpu = self.joint_indices.cpu()
+
         for counter in range(num_steps * self.divisor):
             index = counter // self.divisor
             if index >= num_steps:
                 break
 
-            adjusted_time = self._sim_time - buffer_end_time
-
             # Set joint targets at control frequency
             if counter % self.divisor == 0:
-                current_cmd = np.array([joint_angles[j_idx][index] for j_idx in range(num_joints)])
+                current_cmd = joint_angles_arr[index]
 
                 if cmd_buffer is not None:
-                    # Push current command, pop delayed command
                     cmd_buffer.append(current_cmd)
                     delayed_cmd = cmd_buffer[0]
                 else:
                     delayed_cmd = current_cmd
 
                 joint_pos = self._to_torch(self.robot.data.joint_pos)
-                target = joint_pos.clone()
-                for j_idx, art_idx in enumerate(self.joint_indices):
-                    target[0, art_idx] = delayed_cmd[j_idx]
-                self.robot.set_joint_position_target(target)
-
-            # Read state and log (wp.array -> torch -> numpy for CSV)
-            # Log the original (non-delayed) command for comparison with real data
-            cmd_pos = np.array([joint_angles[k][index] for k in range(num_joints)])
-            act_pos = self._to_torch(self.robot.data.joint_pos)[0, self.joint_indices].cpu().numpy()
-            act_vel = self._to_torch(self.robot.data.joint_vel)[0, self.joint_indices].cpu().numpy()
-
-            # Read applied torques (motor torque from PD + friction).
-            # Note: real H1 torque sensors report motor torque, not joint
-            # torque, so gravity compensation should NOT be added here.
-            try:
-                act_eff = self._to_torch(self.robot.data.applied_torque)[0, self.joint_indices].cpu().numpy()
-            except (AttributeError, RuntimeError):
-                act_eff = np.zeros(num_joints)
-
-            self._log_state(adjusted_time, cmd_pos, act_pos, act_vel, act_eff)
+                target_tensor.copy_(joint_pos)
+                for j_idx, art_idx in enumerate(joint_indices_cpu):
+                    target_tensor[0, art_idx] = delayed_cmd[j_idx]
+                self.robot.set_joint_position_target(target_tensor)
 
             self._sim_step()
+            pbar.update(1)
+
+            # Log state at control frequency only (skip physics-only substeps)
+            if counter % self.divisor == 0:
+                adjusted_time = self._sim_time - buffer_end_time
+                cmd_pos = joint_angles_arr[index]
+
+                # Single GPU→CPU sync: read pos, vel, torque in one batch
+                jp = self._to_torch(self.robot.data.joint_pos)
+                jv = self._to_torch(self.robot.data.joint_vel)
+                act_pos = jp[0, self.joint_indices].cpu().numpy()
+                act_vel = jv[0, self.joint_indices].cpu().numpy()
+
+                try:
+                    jt = self._to_torch(self.robot.data.applied_torque)
+                    act_eff = jt[0, self.joint_indices].cpu().numpy()
+                except (AttributeError, RuntimeError):
+                    act_eff = np.zeros(num_joints)
+
+                self._log_state(adjusted_time, cmd_pos, act_pos, act_vel, act_eff)
+
+        pbar.close()
+
+        # Flush buffered CSV rows to disk
+        self._flush_logs()
 
         final_pos = self._to_torch(self.robot.data.joint_pos)[0, self.joint_indices].cpu().numpy()
-        log_message(
-            f"Motion completed in {counter + 1} physics steps. "
-            f"Joint positions stopped at (rad): {list(final_pos)}"
+        tqdm.write(
+            f"[Benchmark] {self.motion_name} done — {counter + 1} steps, "
+            f"saved to {self.sim_output_folder}"
         )
-        log_message(f"Benchmark complete for {self.motion_name}. Results saved to {self.sim_output_folder}")
+
+    def run_benchmark_batch(self, motions):
+        """Run multiple motions in parallel across environments.
+
+        Args:
+            motions: list of (motion_file, motion_name) tuples. Length must
+                match ``self._num_envs``.
+        """
+        if len(motions) != self._num_envs:
+            raise ValueError(
+                f"Got {len(motions)} motions but {self._num_envs} envs. "
+                f"These must match."
+            )
+
+        n_envs = self._num_envs
+
+        # --- Load all motions and determine shared joint setup ---
+        # Use first motion to set joint_names/joint_indices (all motions share same joints)
+        self.set_motion(motions[0][0], motions[0][1])
+        num_joints = len(self.joint_names)
+
+        all_angles = []  # list of (num_steps,num_joints) arrays
+        all_names = []
+        per_env_loggers = []  # list of (sim_output_folder, control_file, dof_file)
+
+        for env_idx, (motion_file, motion_name) in enumerate(motions):
+            self.motion_file = motion_file
+            self.motion_name = motion_name
+            joint_angles, _ = self._load_motion()
+            n_steps = len(joint_angles[0])
+            arr = np.array(
+                [[joint_angles[j][i] for j in range(num_joints)] for i in range(n_steps)],
+                dtype=np.float64,
+            )
+            all_angles.append(arr)
+            all_names.append(motion_name)
+
+            # Set up per-env output directory
+            self._init_logger()
+            per_env_loggers.append({
+                "folder": self.sim_output_folder,
+                "control_file": self.control_file,
+                "dof_file": self.dof_file,
+                "control_rows": [],
+                "state_rows": [],
+            })
+
+        # Pad to max length
+        max_steps = max(a.shape[0] for a in all_angles)
+        motion_lengths = [a.shape[0] for a in all_angles]
+        padded = np.zeros((n_envs, max_steps, num_joints), dtype=np.float64)
+        for i, arr in enumerate(all_angles):
+            padded[i, :arr.shape[0]] = arr
+            # Hold final position for padding region
+            if arr.shape[0] < max_steps:
+                padded[i, arr.shape[0]:] = arr[-1]
+
+        log_message(f"Batched {n_envs} motions (max {max_steps} steps, {num_joints} joints)")
+        for i, (mlen, mname) in enumerate(zip(motion_lengths, all_names)):
+            log_message(f"  env {i}: {mname} ({mlen} steps)")
+
+        # --- Simulation ---
+        self._sim_time = 0.0
+        _bench_section = self._run_cfg.get("benchmark", {})
+        BUFFER_TIME = float(_bench_section.get("buffer_time", 5.0))
+        buffer_control_steps = int(BUFFER_TIME / self.control_dt)
+
+        # Read initial positions for all envs
+        joint_pos_all = self._to_torch(self.robot.data.joint_pos)  # (n_envs, n_robot_joints)
+        initial_pos = joint_pos_all[:, self.joint_indices].cpu().numpy()  # (n_envs, num_joints)
+        motion_start_pos = padded[:, 0, :]  # (n_envs, num_joints)
+
+        total_steps = buffer_control_steps * self.divisor + max_steps * self.divisor
+        pbar = tqdm(
+            total=total_steps,
+            desc=f"Batch ({n_envs} envs)", unit="step",
+            bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]",
+        )
+
+        # Buffer phase: interpolate all envs to their motion start
+        for step in range(buffer_control_steps * self.divisor):
+            ctrl_step = step // self.divisor
+
+            if step % self.divisor == 0:
+                alpha = ctrl_step / buffer_control_steps
+                interp_pos = (1 - alpha) * initial_pos + alpha * motion_start_pos  # (n_envs, num_joints)
+
+                joint_pos_all = self._to_torch(self.robot.data.joint_pos)
+                target = joint_pos_all.clone()
+                for j_idx, art_idx in enumerate(self.joint_indices):
+                    target[:, art_idx] = torch.tensor(
+                        interp_pos[:, j_idx], dtype=torch.float32, device=self.robot.device
+                    )
+                self.robot.set_joint_position_target(target)
+
+            self._sim_step()
+            pbar.update(1)
+
+        buffer_end_time = self._sim_time
+        tqdm.write(f"[Benchmark] Buffer done. Running {n_envs} motions in parallel...")
+
+        # Command delay buffers (per-env)
+        lag = self.motor_lag_steps
+        if lag > 0:
+            cmd_buffers = []
+            for env_idx in range(n_envs):
+                buf = deque(maxlen=lag + 1)
+                for _ in range(lag):
+                    buf.append(motion_start_pos[env_idx].copy())
+                cmd_buffers.append(buf)
+        else:
+            cmd_buffers = None
+
+        # Pre-allocate target tensor
+        target_tensor = self._to_torch(self.robot.data.joint_pos).clone()
+
+        # --- Main motion playback (all envs in lockstep) ---
+        for counter in range(max_steps * self.divisor):
+            index = counter // self.divisor
+            if index >= max_steps:
+                break
+
+            # Set joint targets at control frequency
+            if counter % self.divisor == 0:
+                current_cmds = padded[:, index, :]  # (n_envs, num_joints)
+
+                if cmd_buffers is not None:
+                    delayed_cmds = np.empty_like(current_cmds)
+                    for env_idx in range(n_envs):
+                        cmd_buffers[env_idx].append(current_cmds[env_idx])
+                        delayed_cmds[env_idx] = cmd_buffers[env_idx][0]
+                else:
+                    delayed_cmds = current_cmds
+
+                joint_pos_all = self._to_torch(self.robot.data.joint_pos)
+                target_tensor.copy_(joint_pos_all)
+                for j_idx, art_idx in enumerate(self.joint_indices):
+                    target_tensor[:, art_idx] = torch.tensor(
+                        delayed_cmds[:, j_idx], dtype=torch.float32, device=self.robot.device
+                    )
+                self.robot.set_joint_position_target(target_tensor)
+
+            self._sim_step()
+            pbar.update(1)
+
+            # Log state at control frequency
+            if counter % self.divisor == 0:
+                adjusted_time = self._sim_time - buffer_end_time
+
+                jp = self._to_torch(self.robot.data.joint_pos)
+                jv = self._to_torch(self.robot.data.joint_vel)
+                act_pos_all = jp[:, self.joint_indices].cpu().numpy()  # (n_envs, num_joints)
+                act_vel_all = jv[:, self.joint_indices].cpu().numpy()
+
+                try:
+                    jt = self._to_torch(self.robot.data.applied_torque)
+                    act_eff_all = jt[:, self.joint_indices].cpu().numpy()
+                except (AttributeError, RuntimeError):
+                    act_eff_all = np.zeros((n_envs, num_joints))
+
+                for env_idx in range(n_envs):
+                    # Only log while this env's motion is still active
+                    if index < motion_lengths[env_idx]:
+                        ts_us = adjusted_time * 1e6
+                        cmd_pos = padded[env_idx, index]
+                        per_env_loggers[env_idx]["control_rows"].append(
+                            ["CONTROL", f"{ts_us:.1f}", cmd_pos.tolist()]
+                        )
+                        per_env_loggers[env_idx]["state_rows"].append(
+                            ["STATE_MOTOR", f"{ts_us:.1f}",
+                             act_pos_all[env_idx].tolist(),
+                             act_vel_all[env_idx].tolist(),
+                             act_eff_all[env_idx].tolist()]
+                        )
+
+        pbar.close()
+
+        # --- Flush all per-env CSV files ---
+        for env_idx, logger in enumerate(per_env_loggers):
+            with open(logger["control_file"], "w", newline="") as f:
+                writer = csv.writer(f)
+                writer.writerow(["type", "timestamp", "positions"])
+                writer.writerows(logger["control_rows"])
+
+            with open(logger["dof_file"], "w", newline="") as f:
+                writer = csv.writer(f)
+                writer.writerow(["type", "timestamp", "positions", "velocities", "torques"])
+                writer.writerows(logger["state_rows"])
+
+            tqdm.write(
+                f"  {all_names[env_idx]}: {len(logger['control_rows'])} rows "
+                f"-> {logger['folder']}"
+            )
+
+        tqdm.write(f"[Benchmark] Batch complete — {n_envs} motions processed in parallel")
 
     def log_joint_properties(self):
         """Print a summary of joint properties."""
