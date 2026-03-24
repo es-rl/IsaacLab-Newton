@@ -15,6 +15,7 @@ benchmark:
   motor_lag_ms: null         # null = read from actuator YAML
   kp: null                   # null = use actuator YAML defaults
   kd: null
+  output_folder: output/sim2real_benchmark
 
 # Actuator model for benchmark arm joints.
 # model_type: implicit | dcmotor | lstm | lstm_perjoint  (gru / gru_perjoint also accepted)

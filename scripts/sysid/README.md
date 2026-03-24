@@ -431,6 +431,132 @@ If `--joint-type` is set (e.g., `--joint-type elbow`), the scripts look for CSV 
 
 If `--joint-type` is not set, they use generic names: `position`, `position_error`, `velocity`, `torque`.
 
+## Motion Generation
+
+`motion_generation/generate_chirp.py` generates linear chirp (frequency-sweep) motion files for system identification. Chirps sweep from a low frequency to a high frequency over a set duration, exciting a range of dynamics useful for parameter fitting.
+
+### Basic Usage
+
+```bash
+# Single elbow chirp (0.1-5 Hz, 20s, 0.5 rad amplitude)
+python scripts/sysid/motion_generation/generate_chirp.py \
+    --joints elbow --f0 0.1 --f1 5.0 --duration 20
+
+# All H1 arm joints sequentially (root first: pitch -> roll -> yaw -> elbow)
+python scripts/sysid/motion_generation/generate_chirp.py \
+    --joints all_arms --f0 0.1 --f1 10.0 --duration 30
+
+# UR10e elbow (shorthand resolved to elbow_joint)
+python scripts/sysid/motion_generation/generate_chirp.py \
+    --robot ur10e --joints elbow --f0 0.1 --f1 5.0
+
+# UR10e all joints sequentially (root first)
+python scripts/sysid/motion_generation/generate_chirp.py \
+    --robot ur10e --joints all --f0 0.1 --f1 5.0
+
+# Teststand
+python scripts/sysid/motion_generation/generate_chirp.py \
+    --robot teststand --f0 0.1 --f1 5.0
+```
+
+### Sequential vs Simultaneous
+
+When multiple joints are specified, the default is **sequential** mode: each joint is chirped one at a time (root first, end-effector last) while all other joints hold at their bias position. This is safer for sysid because exciting the root first keeps end-effector perturbations small.
+
+- **Sequential** (default): Total duration = `(duration + rest_time) * num_joints`. Order: root -> end-effector.
+- **Simultaneous** (`--simultaneous`): All joints chirp at the same time. Total duration = `duration`.
+
+```bash
+# Sequential (default) — one joint at a time with 2s rest between
+python scripts/sysid/motion_generation/generate_chirp.py \
+    --joints all_arms --rest-time 2.0
+
+# Simultaneous — all joints move at once
+python scripts/sysid/motion_generation/generate_chirp.py \
+    --joints all_arms --simultaneous
+```
+
+Sequential ordering per robot:
+- **H1 arms**: shoulder_pitch -> shoulder_roll -> shoulder_yaw -> elbow
+- **UR10e**: shoulder_pan -> shoulder_lift -> elbow -> wrist_1 -> wrist_2 -> wrist_3
+
+### Per-Joint Amplitudes and Biases
+
+```bash
+# Different amplitude and bias per joint
+python scripts/sysid/motion_generation/generate_chirp.py \
+    --joints elbow shoulder_pitch \
+    --amplitude 0.5 0.3 --bias 0.8 -0.3
+```
+
+### Output Formats
+
+By default, a `.txt` motion file is written (compatible with `run_benchmark.py`). Additional formats:
+
+```bash
+# Also write motor CSV (for sysid data input)
+python scripts/sysid/motion_generation/generate_chirp.py \
+    --joints elbow --output-csv
+
+# Also write SAGE format (control.csv + state_motor.csv)
+python scripts/sysid/motion_generation/generate_chirp.py \
+    --joints elbow --output-sage
+```
+
+Output goes to `input/motion_files/<robot>/chirp/` by default. Override with `--output-dir`.
+
+The auto-generated filename encodes all parameters (joints, frequency, amplitude, duration, mode) which can get long for multi-joint runs. Use `--name` to set a short custom stem:
+
+```bash
+# Short custom name (produces ur10e_all_chirp.txt + ur10e_all_chirp.png)
+python scripts/sysid/motion_generation/generate_chirp.py \
+    --robot ur10e --joints all --f0 0.1 --f1 5.0 --name ur10e_all_chirp
+```
+
+### Visualizing in Simulation
+
+Play back the generated motion in Newton sim:
+
+```bash
+python scripts/sim2real_gap/run_benchmark.py \
+    --robot-name ur10e \
+    --motion-files input/motion_files/ur10e/chirp/ur10e_all_chirp.txt \
+    --headless
+```
+
+Add `--visualizer newton` instead of `--headless` if `isaaclab_visualizers` is installed (`pip install isaaclab_visualizers[newton]`).
+
+### Supported Robots
+
+| Robot | Joint Shorthands | Groups |
+|---|---|---|
+| `h1` | `elbow`, `shoulder_pitch`, `shoulder_roll`, `shoulder_yaw` | `all_arms` |
+| `ur10e` | `elbow`, `shoulder_pan`, `shoulder_lift`, `wrist_1`, `wrist_2`, `wrist_3` | `all` |
+| `teststand` | `elbow` | — |
+
+For H1, left/right mirroring is on by default (`--no-mirror` to disable). UR10e and teststand have no mirroring.
+
+### CLI Arguments
+
+| Argument | Default | Description |
+|---|---|---|
+| `--robot` | `h1` | Robot: `h1`, `ur10e`, `teststand` |
+| `--joints` | `elbow` | Joints to excite (short names or groups) |
+| `--f0` | `0.1` | Start frequency [Hz] |
+| `--f1` | `5.0` | End frequency [Hz] |
+| `--duration` | `20.0` | Chirp duration per joint [s] |
+| `--amplitude` | `0.5` | Peak amplitude [rad] (1 or per-joint) |
+| `--bias` | `0.0` | DC offset [rad] (1 or per-joint) |
+| `--control-freq` | `500` | Sample rate [Hz] |
+| `--simultaneous` | off | All joints at once (default: sequential) |
+| `--rest-time` | `2.0` | Rest between sequential joints [s] |
+| `--mirror` / `--no-mirror` | on | Left/right mirroring (H1 only) |
+| `--output-csv` | off | Also write motor CSV format |
+| `--output-sage` | off | Also write SAGE format |
+| `--output-dir` | auto | Output directory |
+| `--name` | auto | Output filename stem |
+| `--no-plot` | off | Skip PNG plot generation |
+
 ## H1 Motor CSV Converter
 
 Raw H1 motor CSVs (4 arm joints: elbow, pitch/shoulder_pitch, raise/shoulder_roll, yaw/shoulder_yaw) are auto-converted when passed to `--real-data-dir`. You can also convert manually using `convert_h1_chirp_to_csv.py`.
