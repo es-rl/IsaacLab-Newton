@@ -1162,7 +1162,7 @@ class NewtonJointMotionBenchmark:
     def _sim_step(self):
         """Perform one physics step using the ManagerBasedRLEnv pattern."""
         self.scene.write_data_to_sim()
-        self.sim.step(render=not self.headless)
+        self.sim.step(render=True)
         self._sim_time += self.physics_dt
         self.scene.update(self.physics_dt)
 

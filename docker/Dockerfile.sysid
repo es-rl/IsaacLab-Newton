@@ -12,6 +12,16 @@ RUN --mount=type=cache,target=${DOCKER_USER_HOME}/.cache/pip \
     "mujoco>=3.5.0" \
     "mujoco-warp>=3.5.0"
 
+# Install Newton visualizer (for --visualizer newton)
+# Copy the visualizers source (may not exist in the base image) and install
+# as editable so it picks up subpackages. At runtime the bind-mount of source/
+# replaces this directory with the host copy, which also has the package.
+COPY source/isaaclab_visualizers/ ${ISAACLAB_PATH}/source/isaaclab_visualizers/
+RUN --mount=type=cache,target=${DOCKER_USER_HOME}/.cache/pip \
+    ${ISAACLAB_PATH}/_isaac_sim/python.sh -m pip install \
+    --no-deps --editable \
+    "${ISAACLAB_PATH}/source/isaaclab_visualizers"
+
 # Install sysid and model training dependencies
 RUN --mount=type=cache,target=${DOCKER_USER_HOME}/.cache/pip \
     ${ISAACLAB_PATH}/isaaclab.sh -p -m pip install \

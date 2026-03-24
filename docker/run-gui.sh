@@ -55,14 +55,23 @@ if [ -n "$EXISTING" ]; then
         echo "[INFO] Container '$CONTAINER_NAME' already running"
     fi
 
+    # Build env flags for X11 forwarding into existing container
+    X11_ENV_FLAGS=""
+    if [ -z "$HEADLESS" ] && [ -n "$DISPLAY" ]; then
+        X11_ENV_FLAGS="-e DISPLAY=$DISPLAY -e QT_X11_NO_MITSHM=1"
+        if [ -n "$TMP_XAUTH" ] && [ -f "$TMP_XAUTH" ]; then
+            X11_ENV_FLAGS="$X11_ENV_FLAGS -e XAUTHORITY=$TMP_XAUTH"
+        fi
+    fi
+
     if [ $# -eq 0 ]; then
         echo "[INFO] Attaching to container..."
         echo ""
-        docker exec -it "$CONTAINER_NAME" bash
+        docker exec -it $X11_ENV_FLAGS "$CONTAINER_NAME" bash
     else
         echo "[INFO] Running command in existing container: $*"
         echo ""
-        docker exec -it "$CONTAINER_NAME" bash -c "$*"
+        docker exec -it $X11_ENV_FLAGS "$CONTAINER_NAME" bash -c "$*"
     fi
 else
     # Container doesn't exist — create it with docker compose run
