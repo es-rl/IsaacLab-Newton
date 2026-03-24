@@ -6,12 +6,14 @@
 effort_limit_sim: 25.0          # N-m
 velocity_limit_sim: 13.5        # rad/s
 
-# PD gains
-stiffness: 60                  # kp
-damping: 1.5                   # kd
+# PD gains (CMA-ES sysid optimized)
+stiffness: 81.6507             # kp
+damping: 0.495                 # kd
 
 # Command transport delay
 motor_lag_ms: 10               # ms
 
-# Mechanical parameters (all zero = no sysid tuning applied yet)
-armature: 0.0
+# Mechanical parameters (CMA-ES sysid optimized)
+armature: 0.03225
+dynamic_friction: 0.1711
+viscous_friction: 0.00937
