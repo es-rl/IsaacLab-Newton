@@ -1,0 +1,21 @@
+# Copyright (c) 2022-2026, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
+# X11 overlay for Windows (Docker Desktop with WSL2 backend).
+# Uses VcXsrv or similar X server on the Windows host.
+# Before using: launch VcXsrv with "Disable access control" checked,
+# or run `xhost +local:docker` from a WSL2 terminal.
+
+services:
+  isaac-lab-sysid:
+    # network_mode: host is not supported on Docker Desktop for Windows.
+    # The default bridge network is used instead; X11 reaches the host
+    # via the special DNS name host.docker.internal.
+    network_mode: bridge
+    environment:
+      - DISPLAY=host.docker.internal:0.0
+      - TERM
+      - QT_X11_NO_MITSHM=1
+      - LIBGL_ALWAYS_INDIRECT=0
