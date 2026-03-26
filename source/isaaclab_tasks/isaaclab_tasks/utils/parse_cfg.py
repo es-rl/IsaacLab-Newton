@@ -70,6 +70,9 @@ def _resolve_presets_to_default(cfg: object) -> object:
     return cfg
 
 
+# TODO: The nested-preset resolution logic in apply_named_preset (and related helpers)
+# should be unified with the deep-nesting fixes in https://github.com/isaac-sim/IsaacLab/pull/5029
+# (isaaclab_tasks.utils.hydra), which properly handles deeply nested PresetCfg discovery.
 def apply_named_preset(env_cfg: object, raw_cfg: object, preset_name: str) -> None:
     """Apply a named preset to all preset-wrapper fields in *env_cfg*, guided by *raw_cfg*.
 
