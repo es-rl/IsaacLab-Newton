@@ -1,29 +1,26 @@
 """Motor test stand scene — IsaacLab scene config for the elbow benchtop rig.
 
-Loads the motor_teststand URDF (fixed base + bar arm + revolute elbow joint)
+Loads the motor_teststand USDA (fixed base + bar arm + revolute elbow joint)
 via IsaacLab's InteractiveScene + SimulationContext with Newton solver.
 
-Usage (from repo root):
-    # Sine wave demo (headless)
-    ./isaaclab.sh -p scripts/sim2real_gap/teststand_scene.py
-
-    # With viewer
-    ./isaaclab.sh -p scripts/sim2real_gap/teststand_scene.py --enable_cameras
+Usage (from repo root, inside docker):
+    # Sine wave demo
+    python scripts/sim2real_gap/teststand_scene.py
 
     # Custom PD gains
-    ./isaaclab.sh -p scripts/sim2real_gap/teststand_scene.py --kp 131.47 --kd 8.52
+    python scripts/sim2real_gap/teststand_scene.py --kp 131.47 --kd 8.52
 
     # Replay real CSV data
-    ./isaaclab.sh -p scripts/sim2real_gap/teststand_scene.py --csv path/to/data.csv
+    python scripts/sim2real_gap/teststand_scene.py --csv path/to/data.csv
 """
 
 import argparse
 import math
 import os
-import sys
 
 import numpy as np
 import torch
+import warp as wp
 
 import isaaclab.sim as sim_utils
 from isaaclab.actuators import ImplicitActuatorCfg
@@ -36,7 +33,9 @@ from isaaclab.sim import SimulationCfg, SimulationContext
 # ---------------------------------------------------------------------------
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 _REPO_ROOT = os.path.abspath(os.path.join(_SCRIPT_DIR, "..", ".."))
-_URDF_PATH = os.path.join(_REPO_ROOT, "input", "robot_models", "motor_teststand", "motor_teststand.urdf")
+_TESTSTAND_USD = os.path.join(
+    _REPO_ROOT, "input", "robot_models", "motor_teststand", "motor_teststand.usda"
+)
 
 # ---------------------------------------------------------------------------
 # Default PD gains (match Desktop newton-teststand defaults)
@@ -64,16 +63,7 @@ class TestStandSceneCfg(InteractiveSceneCfg):
 
     robot: ArticulationCfg = ArticulationCfg(
         prim_path="{ENV_REGEX_NS}/TestStand",
-        spawn=sim_utils.UrdfFileCfg(
-            asset_path=_URDF_PATH,
-            fix_base=True,
-            joint_drive=sim_utils.UrdfConverterCfg.JointDriveCfg(
-                gains=sim_utils.UrdfConverterCfg.JointDriveCfg.PDGainsCfg(
-                    stiffness=DEFAULT_KP,
-                    damping=DEFAULT_KD,
-                ),
-            ),
-        ),
+        spawn=sim_utils.UsdFileCfg(usd_path=_TESTSTAND_USD),
         init_state=ArticulationCfg.InitialStateCfg(
             pos=(0.0, 0.0, 0.0),
             joint_pos={"elbow": 0.0},
@@ -99,7 +89,7 @@ def main():
     parser.add_argument("--kd", type=float, default=DEFAULT_KD, help="PD damping")
     parser.add_argument("--csv", type=str, default=None, help="Real experiment CSV to replay")
     parser.add_argument("--duration", type=float, default=10.0, help="Sine wave duration (s)")
-    args, _ = parser.parse_known_args()
+    args = parser.parse_args()
 
     # ------------------------------------------------------------------
     # Simulation context (Newton solver)
@@ -174,12 +164,16 @@ def main():
     # ------------------------------------------------------------------
     # Set initial joint position
     # ------------------------------------------------------------------
-    joint_idx = scene["robot"].find_joints("elbow")[0][0]
+    robot = scene["robot"]
+    joint_idx = robot.find_joints("elbow")[0][0]
     init_pos = float(real_cmd[0])
-    scene["robot"].write_joint_state_to_sim(
-        torch.tensor([[init_pos]], dtype=torch.float32, device=sim.device),
-        torch.zeros(1, 1, dtype=torch.float32, device=sim.device),
-        joint_ids=[joint_idx],
+
+    # Newton uses wp.array — write via wp.to_torch bridge
+    default_pos = wp.to_torch(robot.data.default_joint_pos)
+    default_pos[0, joint_idx] = init_pos
+    robot.write_joint_state_to_sim(
+        position=default_pos,
+        velocity=wp.to_torch(robot.data.default_joint_vel),
     )
     sim.step()
     scene.update(SIM_DT)
@@ -192,14 +186,13 @@ def main():
         cmd = float(real_cmd[step])
 
         # Set position target
-        scene["robot"].set_joint_position_target(
-            torch.tensor([[cmd]], dtype=torch.float32, device=sim.device),
-            joint_ids=[joint_idx],
-        )
+        target = wp.to_torch(robot.data.joint_pos_target)
+        target[0, joint_idx] = cmd
+        robot.set_joint_position_target(target)
 
         # Read state before step (for torque computation)
-        pos = scene["robot"].data.joint_pos[0, joint_idx].item()
-        vel = scene["robot"].data.joint_vel[0, joint_idx].item()
+        pos = wp.to_torch(robot.data.joint_pos)[0, joint_idx].item()
+        vel = wp.to_torch(robot.data.joint_vel)[0, joint_idx].item()
         torque = args.kp * (cmd - pos) - args.kd * vel
 
         # Step
@@ -210,8 +203,8 @@ def main():
         # Log
         log_time[step] = step * SIM_DT
         log_cmd[step] = cmd
-        log_sim_pos[step] = scene["robot"].data.joint_pos[0, joint_idx].item()
-        log_sim_vel[step] = scene["robot"].data.joint_vel[0, joint_idx].item()
+        log_sim_pos[step] = wp.to_torch(robot.data.joint_pos)[0, joint_idx].item()
+        log_sim_vel[step] = wp.to_torch(robot.data.joint_vel)[0, joint_idx].item()
         log_sim_torque[step] = torque
 
         if (step + 1) % 200 == 0:
