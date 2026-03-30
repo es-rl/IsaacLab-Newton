@@ -1,4 +1,6 @@
 <?xml version="1.0"?>
+<!-- Copyright (c) 2022-2026, The Isaac Lab Project Developers.
+     SPDX-License-Identifier: BSD-3-Clause -->
 <!--
   Motor Test Stand — digital twin of the H1 elbow benchtop rig.
 

@@ -1,3 +1,8 @@
+# Copyright (c) 2022-2026, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
 """Motor test stand scene — IsaacLab scene config for the elbow benchtop rig.
 
 Loads the motor_teststand USDA (fixed base + bar arm + revolute elbow joint)
@@ -27,6 +32,7 @@ from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab.assets import ArticulationCfg, AssetBaseCfg
 from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
 from isaaclab.sim import SimulationCfg, SimulationContext
+from isaaclab.utils import configclass
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -48,6 +54,7 @@ SIM_DT = 1.0 / 200.0  # 200 Hz, matches real motor control rate
 # ---------------------------------------------------------------------------
 # Scene config
 # ---------------------------------------------------------------------------
+@configclass
 class TestStandSceneCfg(InteractiveSceneCfg):
     """Scene with the motor test stand articulation and a ground plane."""
 
