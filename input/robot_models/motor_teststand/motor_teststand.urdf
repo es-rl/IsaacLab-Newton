@@ -1,0 +1,130 @@
+<?xml version="1.0"?>
+<!--
+  Motor Test Stand — digital twin of the H1 elbow benchtop rig.
+
+  Physical setup:
+    - Motor housing (base cylinder) fixed to world
+    - Aluminium bar (0.6096 x 0.05 x 0.005 m, 2.906 kg) + two cylindrical
+      weights (505.2 g left, 507.8 g right) at +/-0.28 m from pivot
+    - Single revolute "elbow" joint on Z-axis, limits [-115, +143] deg
+
+  All dimensions and masses match the real test stand used for closed-loop
+  SysID and actuator model validation.
+-->
+<robot name="motor_teststand">
+
+  <!-- ============================================================ -->
+  <!-- World (virtual anchor)                                       -->
+  <!-- ============================================================ -->
+  <link name="world"/>
+
+  <!-- ============================================================ -->
+  <!-- Base — motor housing cylinder (r=0.05 m, h=0.05 m, 0.5 kg)  -->
+  <!-- ============================================================ -->
+  <link name="base">
+    <inertial>
+      <origin xyz="0.0 0.0 0.0" rpy="0.0 0.0 0.0"/>
+      <mass value="0.5"/>
+      <inertia ixx="0.000417" ixy="0.0" ixz="0.0"
+               iyy="0.000417" iyz="0.0" izz="0.000625"/>
+    </inertial>
+    <visual>
+      <origin xyz="0.0 0.0 0.0" rpy="0.0 0.0 0.0"/>
+      <geometry>
+        <cylinder radius="0.05" length="0.05"/>
+      </geometry>
+      <material name="dark_grey">
+        <color rgba="0.3 0.3 0.3 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.0 0.0 0.0" rpy="0.0 0.0 0.0"/>
+      <geometry>
+        <cylinder radius="0.05" length="0.05"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <!-- Fixed joint: world -> base (motor sits at z=0.5 m above ground) -->
+  <joint name="world_fixed" type="fixed">
+    <parent link="world"/>
+    <child link="base"/>
+    <origin xyz="0.0 0.0 0.5" rpy="0.0 0.0 0.0"/>
+  </joint>
+
+  <!-- ============================================================ -->
+  <!-- Arm — bar + two cylindrical weights                          -->
+  <!--   Bar:   0.6096 x 0.05 x 0.005 m, 2.906 kg                 -->
+  <!--   Left:  r=0.025, h=0.034 m, 505.2 g at x=-0.28            -->
+  <!--   Right: r=0.025, h=0.034 m, 507.8 g at x=+0.28            -->
+  <!--   Combined: 3.919 kg, COM at (0.000186, 0, 0.00504)         -->
+  <!-- ============================================================ -->
+  <link name="arm">
+    <inertial>
+      <origin xyz="0.000186 0.0 0.00504" rpy="0.0 0.0 0.0"/>
+      <mass value="3.9189"/>
+      <inertia ixx="0.001153" ixy="0.0" ixz="0.0"
+               iyy="0.169952" iyz="0.0" izz="0.170327"/>
+    </inertial>
+
+    <!-- Bar (centered at link origin) -->
+    <visual>
+      <origin xyz="0.0 0.0 0.0" rpy="0.0 0.0 0.0"/>
+      <geometry>
+        <box size="0.6096 0.05 0.005"/>
+      </geometry>
+      <material name="silver">
+        <color rgba="0.5 0.5 0.53 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.0 0.0 0.0" rpy="0.0 0.0 0.0"/>
+      <geometry>
+        <box size="0.6096 0.05 0.005"/>
+      </geometry>
+    </collision>
+
+    <!-- Left weight cylinder -->
+    <visual>
+      <origin xyz="-0.28 0.0 0.0195" rpy="0.0 0.0 0.0"/>
+      <geometry>
+        <cylinder radius="0.025" length="0.034"/>
+      </geometry>
+      <material name="silver"/>
+    </visual>
+    <collision>
+      <origin xyz="-0.28 0.0 0.0195" rpy="0.0 0.0 0.0"/>
+      <geometry>
+        <cylinder radius="0.025" length="0.034"/>
+      </geometry>
+    </collision>
+
+    <!-- Right weight cylinder -->
+    <visual>
+      <origin xyz="0.28 0.0 0.0195" rpy="0.0 0.0 0.0"/>
+      <geometry>
+        <cylinder radius="0.025" length="0.034"/>
+      </geometry>
+      <material name="silver"/>
+    </visual>
+    <collision>
+      <origin xyz="0.28 0.0 0.0195" rpy="0.0 0.0 0.0"/>
+      <geometry>
+        <cylinder radius="0.025" length="0.034"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <!-- ============================================================ -->
+  <!-- Elbow revolute joint (Z-axis, same as Desktop newton version) -->
+  <!-- ============================================================ -->
+  <joint name="elbow" type="revolute">
+    <parent link="base"/>
+    <child link="arm"/>
+    <origin xyz="0.0 0.0 0.035" rpy="0.0 0.0 0.0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-2.0071" upper="2.4958" effort="300.0" velocity="10.0"/>
+    <!-- lower = -115 deg = -2.0071 rad, upper = 143 deg = 2.4958 rad -->
+  </joint>
+
+</robot>
