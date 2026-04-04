@@ -6,13 +6,17 @@ simulation:
   control_freq: 500         # Hz
   render_freq: 500          # Hz
   integrator: implicitfast  # Newton solver integrator
-  solver_iterations: 10     # Newton solver iterations
+  solver_iterations: 10    
+  
+  
+  
+   # Newton solver iterations
   ls_iterations: 10         # Newton line-search iterations
 
 #-------------------------------------------------------------------------------------
 benchmark:
   fix_root: true
-  buffer_time: 5.0           # seconds — settle before motion playback
+  buffer_time: 2.0           # seconds — settle before motion playback
   motor_lag_ms: null         # null = read from actuator YAML
   kp: null                   # null = use actuator YAML defaults
   kd: null
@@ -69,11 +73,15 @@ analysis:
   # fmu_step_size: 0.002                          # should match physics dt
   #
   # --- For FMU hybrid model (CoSimulation): ---
+# actuator:
+#   model_type: fmu
+#   yaml_file: h1/h1_arm_implicit.yaml           # PD gains for torque_pred input
+#   fmu_path: h1/nvidia-motor.fmu                # CoSimulation FMU (.fmu archive)
+#   fmu_step_size: 0.002                          # should match physics dt
+
 actuator:
-  model_type: fmu
-  yaml_file: h1/h1_arm_implicit.yaml           # PD gains for torque_pred input
-  fmu_path: h1/nvidia-motor.fmu                # CoSimulation FMU (.fmu archive)
-  fmu_step_size: 0.002                          # should match physics dt
+  model_type: implicit
+  yaml_file: h1/h1_arm_sysid_implicit.yaml
 
 #-------------------------------------------------------------------------------------
 sysid:

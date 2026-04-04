@@ -792,6 +792,9 @@ class NewtonJointMotionBenchmark:
         self.record_video = args.record_video
         self.headless = args.headless
         self._num_envs = num_envs
+        # Render at most 60 fps to the Newton viewer (skip intermediate physics steps)
+        _display_hz = 60
+        self._render_every = max(1, round((args.physics_freq or 500) / _display_hz))
 
         # Load per-robot run config for solver/buffer settings
         from run_configs import load_run_cfg
@@ -1162,7 +1165,9 @@ class NewtonJointMotionBenchmark:
     def _sim_step(self):
         """Perform one physics step using the ManagerBasedRLEnv pattern."""
         self.scene.write_data_to_sim()
-        self.sim.step(render=True)
+        self._render_step_count = getattr(self, "_render_step_count", 0) + 1
+        do_render = (self._render_step_count % self._render_every) == 0
+        self.sim.step(render=do_render)
         self._sim_time += self.physics_dt
         self.scene.update(self.physics_dt)
 

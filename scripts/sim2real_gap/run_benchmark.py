@@ -61,6 +61,7 @@ parser.add_argument(
 parser.add_argument("--valid-joints-file", type=str, default=None, help="Path to valid joints file")
 parser.add_argument("--output-folder", type=str, default=None, help="Path to output folder (default: from run config)")
 parser.add_argument("--fix-root", action="store_true", default=True, help="Fix root joint (default: True)")
+parser.add_argument("--num-envs", type=int, default=None, help="Number of parallel envs (default: matches motion count)")
 parser.add_argument("--physics-freq", type=int, default=200, help="Physics timestep frequency (Hz)")
 parser.add_argument("--render-freq", type=int, default=200, help="Render timestep frequency (Hz)")
 parser.add_argument("--control-freq", type=int, default=None, help="Control frequency (Hz)")
@@ -129,9 +130,17 @@ args.motion_source = _bench_cfg.get("motion_name", "custom")
 if not args.output_folder:
     parser.error("--output-folder is required (set via CLI or run config benchmark.output_folder)")
 
+# Save DISPLAY before AppLauncher: Isaac Sim clears it in headless mode,
+# but the Newton viewer (pyglet) needs it for X11 windowing.
+_saved_display = os.environ.get("DISPLAY")
+
 # Launch Isaac Lab app (initializes Newton backend)
 app_launcher = AppLauncher(args)
 simulation_app = app_launcher.app
+
+# Restore DISPLAY so the Newton viewer can connect to the X server.
+if _saved_display is not None and "DISPLAY" not in os.environ:
+    os.environ["DISPLAY"] = _saved_display
 
 # Now safe to import simulation-dependent modules
 from sage.simulation import get_motion_files, get_motion_name, log_message  # noqa: E402
@@ -281,6 +290,7 @@ def prepare_motor_csv_data(data_dir, output_folder, robot_name, motion_source="c
     import numpy as np
 
     from convert_h1_chirp_to_csv import (
+        JOINT_MAP,
         find_motor_csvs,
         has_position_error,
         write_sage_output,
@@ -310,6 +320,9 @@ def prepare_motor_csv_data(data_dir, output_folder, robot_name, motion_source="c
                 log_message(f"  SKIP {subdir_name}: no <joint>_position columns found")
                 continue
 
+            # Map short CSV column prefixes to full robot joint names (e.g. "elbow" → "right_elbow")
+            robot_joints = [JOINT_MAP.get(j, j) for j in joints]
+
             # Per-file: each CSV becomes its own motion
             for fname in csvs:
                 path = os.path.join(dir_path, fname)
@@ -336,14 +349,14 @@ def prepare_motor_csv_data(data_dir, output_folder, robot_name, motion_source="c
                         all_cmd_rows.append((time_s[k], cmd_pos))
                         all_state_rows.append((time_s[k], state_pos, state_vel, state_torque))
 
-                    write_sage_output(motion_real_dir, all_cmd_rows, all_state_rows, joint_order=joints)
+                    write_sage_output(motion_real_dir, all_cmd_rows, all_state_rows, joint_order=robot_joints)
                     log_message(f"  Converted {motion_name}: {len(time_s)} samples ({1/dt:.0f}Hz)")
 
                 # Create temp motion file for sim playback (bare CSV of commanded positions)
                 tmp = tempfile.NamedTemporaryFile(
                     mode="w", suffix=".txt", delete=False, prefix=f"motion_{motion_name}_"
                 )
-                tmp.write(",".join(joints) + "\n")
+                tmp.write(",".join(robot_joints) + "\n")
                 for k in range(len(time_s)):
                     cmd_pos = [float(commands[j][k]) for j in joints]
                     tmp.write(",".join(f"{v}" for v in cmd_pos) + "\n")
@@ -570,6 +583,22 @@ def main():
             if is_temp:
                 temp_files.add(motion_file)
 
+    elif os.path.isfile(args.motion_files) and args.motion_files.endswith("_motor.csv"):
+        # Single motor CSV file — treat its parent directory as the source dir
+        log_message(f"Detected single motor CSV — auto-converting to SAGE format")
+        prepared = prepare_motor_csv_data(
+            os.path.dirname(args.motion_files), args.output_folder, args.robot_name, args.motion_source
+        )
+        basename = os.path.basename(args.motion_files)
+        # Filter to only the requested file
+        prepared = [(mf, mn, it) for mf, mn, it in prepared if mn == basename.replace("_motor.csv", "")]
+        if not prepared:
+            raise ValueError(f"No convertible motor CSV found: {args.motion_files}")
+        for motion_file, motion_name, is_temp in prepared:
+            motions.append((motion_file, motion_name))
+            if is_temp:
+                temp_files.add(motion_file)
+
     elif _is_motor_csv_dir(args.motion_files):
         log_message(f"Detected motor CSVs in {args.motion_files} — auto-converting to SAGE format")
         prepared = prepare_motor_csv_data(args.motion_files, args.output_folder, args.robot_name, args.motion_source)
@@ -591,7 +620,7 @@ def main():
     log_message(f"Prepared {len(motions)} motions for benchmark")
 
     # Create benchmark with num_envs matching motion count for parallel execution
-    num_envs = len(motions) if len(motions) > 1 else 1
+    num_envs = args.num_envs if args.num_envs is not None else (len(motions) if len(motions) > 1 else 1)
     benchmark = NewtonJointMotionBenchmark(args, num_envs=num_envs)
 
     _write_run_summary(args.output_folder, args.robot_name, args.motion_source, _run_cfg, args)
