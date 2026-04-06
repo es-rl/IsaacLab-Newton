@@ -279,6 +279,8 @@ def _canonicalize_stat_keys(norm: dict) -> dict:
     ``{"elbow_position": {...}, "elbow_velocity": {...}}``
     becomes ``{"position": {...}, "velocity": {...}}``.
     """
+    # Order matters: "position_error" must precede "position" to avoid
+    # "foo_position_error".endswith("position") matching the wrong suffix.
     canonical_suffixes = ["position_error", "position", "velocity", "torque"]
     result = {}
     for key, val in norm.items():
@@ -427,50 +429,187 @@ def _patch_lstm_compute(actuator, sysid_stats=None):
     actuator.compute = types.MethodType(patched_compute, actuator)
 
 
+def _patch_implicit_with_hybrid_residual(actuator, network_file, robot, sysid_stats=None, cross_joint_map=None):
+    """Patch an ImplicitActuator to add GRU residual torque on top of solver PD.
+
+    The solver's implicit PD (target_ke/target_kd) remains active and handles
+    position tracking. This patch adds a GRU-predicted residual as feed-forward
+    joint_efforts, which Newton adds on top of the solver PD torque.
+
+    The GRU should be trained with:
+        residual = real_torque - qfrc_actuator (solver PD output)
+
+    At inference, the solver applies its PD and the GRU residual corrects for
+    gravity, friction, cable forces, and other sim2real gap contributors.
+
+    Args:
+        actuator: ImplicitActuator instance to patch.
+        network_file: Path to the TorchScript GRU model (.pt).
+        robot: The articulation handle (for cross-joint position lookups).
+        sysid_stats: Normalization stats dict from the training stats JSON.
+        cross_joint_map: Mapping from stat-key prefix (e.g. "raise") to sim
+            joint name (e.g. "right_shoulder_roll") for cross-joint inputs.
+    """
+    # Load the GRU network. _ensure_torchscript wraps raw GRU checkpoints to match
+    # Isaac Lab's LSTM interface: forward(x, (h, c)) -> (output, (h, c)) where c is
+    # a dummy passthrough for GRU. The RNN layer is named 'lstm' in both cases.
+    pt_path = _ensure_torchscript(network_file)
+    network = torch.jit.load(pt_path, map_location=actuator._device).eval()
+
+    # Detect architecture (layer is always named 'lstm' due to the wrapper)
+    net_params = dict(network.named_parameters())
+    input_size = net_params["lstm.weight_ih_l0"].shape[1]
+    hidden_size = net_params["lstm.weight_hh_l0"].shape[1]
+    gate_factor = net_params["lstm.weight_ih_l0"].shape[0] // hidden_size
+    num_layers = sum(1 for k in net_params if k.startswith("lstm.weight_ih_l"))
+    n = actuator._num_envs * actuator.num_joints
+
+    rnn_type = "GRU" if gate_factor == 3 else "LSTM"
+    log_message(
+        f"Hybrid residual {rnn_type}: input_size={input_size}, hidden_size={hidden_size}, "
+        f"num_layers={num_layers}, actuator_joints={actuator.num_joints}"
+    )
+
+    # Allocate RNN buffers
+    sea_input = torch.zeros(n, 1, input_size, device=actuator._device)
+    sea_hidden = torch.zeros(num_layers, n, hidden_size, device=actuator._device)
+    sea_cell = torch.zeros(num_layers, n, hidden_size, device=actuator._device)
+
+    # Normalization setup
+    stats = sysid_stats or {}
+    use_norm = bool(stats)
+
+    if use_norm:
+        norm_vars = {}
+        for key in ("position", "position_error", "velocity"):
+            if key in stats:
+                s = stats[key]
+                norm_vars[key] = {k: s[k] for k in ("mean", "std", "p1", "p99")}
+        if "solver_pd" in stats:
+            norm_vars["solver_pd"] = {k: stats["solver_pd"][k] for k in ("mean", "std", "p1", "p99")}
+        if "torque_residual" in stats or "torque" in stats:
+            tk = "torque_residual" if "torque_residual" in stats else "torque"
+            torque_mean = stats[tk]["mean"]
+            torque_std = stats[tk]["std"]
+        else:
+            torque_mean = 0.0
+            torque_std = 1.0
+        log_message(f"Hybrid residual: normalization enabled ({input_size}-input)")
+        use_norm = bool(norm_vars)  # refine: stats may exist but lack expected keys
+    else:
+        torque_mean = 0.0
+        torque_std = 1.0
+        log_message(f"Hybrid residual: no normalization ({input_size}-input)")
+
+    # Resolve neighbor joint indices for cross-joint inputs
+    neighbor_joint_names = []
+    neighbor_joint_indices = []
+    if input_size >= 5 and stats:
+        # Look for cross-joint position columns (channels 3, 4) in stats
+        cols_in = stats.get("cols_in", [])
+        for col in cols_in[3:5]:  # channels after pos, pe, vel
+            if col.endswith("_position"):
+                # Map stat key to sim joint name
+                prefix = col.replace("_position", "")
+                # Map: raise -> right_shoulder_roll, pitch -> right_shoulder_pitch, elbow -> right_elbow
+                prefix_to_joint = cross_joint_map or {}
+                sim_jname = prefix_to_joint.get(prefix)
+                if sim_jname and sim_jname in robot.joint_names:
+                    idx = robot.joint_names.index(sim_jname)
+                    neighbor_joint_names.append(col)
+                    neighbor_joint_indices.append(idx)
+                    log_message(f"  Cross-joint: {col} -> {sim_jname} (idx={idx})")
+
+    # Resolve neighbor normalization stats
+    neighbor_stats = {}
+    for nk in neighbor_joint_names:
+        if nk in stats:
+            neighbor_stats[nk] = stats[nk]
+
+    def patched_compute(self, control_action, joint_pos, joint_vel):
+        nonlocal sea_hidden, sea_cell
+
+        pos_error = (control_action.joint_positions - joint_pos).flatten()
+        vel = joint_vel.flatten()
+
+        if use_norm:
+            # Normalize own-joint inputs
+            s = norm_vars.get("position", {})
+            if s:
+                pos_clipped = joint_pos.flatten().clamp(s["p1"], s["p99"])
+                sea_input[:, 0, 0] = (pos_clipped - s["mean"]) / s["std"]
+            s = norm_vars.get("position_error", {})
+            if s:
+                pe_clipped = pos_error.clamp(s["p1"], s["p99"])
+                sea_input[:, 0, 1] = (pe_clipped - s["mean"]) / s["std"]
+            s = norm_vars.get("velocity", {})
+            if s:
+                vel_clipped = vel.clamp(s["p1"], s["p99"])
+                sea_input[:, 0, 2] = (vel_clipped - s["mean"]) / s["std"]
+
+            # Cross-joint positions (channels 3, 4)
+            if neighbor_joint_indices and robot is not None:
+                full_pos = robot.data.joint_pos
+                if not isinstance(full_pos, torch.Tensor):
+                    full_pos = wp.to_torch(full_pos)
+                for ch_idx, (nk, jidx) in enumerate(zip(neighbor_joint_names, neighbor_joint_indices), start=3):
+                    ns = neighbor_stats.get(nk, {})
+                    raw_val = full_pos[:, jidx].flatten()
+                    if ns:
+                        clipped = raw_val.clamp(ns["p1"], ns["p99"])
+                        if clipped.shape[0] != sea_input.shape[0]:
+                            clipped = clipped.repeat_interleave(actuator.num_joints)
+                        sea_input[:, 0, ch_idx] = (clipped - ns["mean"]) / ns["std"]
+
+            # Channel 5 for 6-input models: analytical PD estimate
+            if input_size >= 6:
+                s_pd = norm_vars.get("solver_pd", {})
+                if s_pd:
+                    solver_pd = self.stiffness.flatten() * pos_error - self.damping.flatten() * vel
+                    pd_clipped = solver_pd.clamp(s_pd["p1"], s_pd["p99"])
+                    sea_input[:, 0, 5] = (pd_clipped - s_pd["mean"]) / s_pd["std"]
+        else:
+            sea_input[:, 0, 0] = pos_error
+            sea_input[:, 0, 1] = vel
+
+        # Run GRU
+        with torch.inference_mode():
+            torques, (sea_hidden[:], sea_cell[:]) = network(sea_input, (sea_hidden, sea_cell))
+
+        if use_norm:
+            torques = torques * torque_std + torque_mean
+
+        # Add GRU residual as feed-forward effort on top of solver PD.
+        # control_action.joint_positions is preserved → solver PD stays active.
+        residual = torques.reshape(actuator._num_envs, actuator.num_joints)
+        if control_action.joint_efforts is not None:
+            control_action.joint_efforts = control_action.joint_efforts + residual
+        else:
+            control_action.joint_efforts = residual
+
+        # Approximate applied_torque for logging: PD estimate + GRU residual.
+        # The real solver PD may differ due to implicit integration terms.
+        pd_estimate = self.stiffness * (control_action.joint_positions - joint_pos) - self.damping * joint_vel
+        self.computed_effort = pd_estimate + control_action.joint_efforts
+        self.applied_effort = self._clip_effort(self.computed_effort)
+
+        return control_action
+
+    import types
+
+    actuator.compute = types.MethodType(patched_compute, actuator)
+    # Store network reference to prevent garbage collection
+    actuator._hybrid_network = network
+    actuator._hybrid_hidden = sea_hidden
+    actuator._hybrid_cell = sea_cell
+    actuator._hybrid_input = sea_input
+
+
 # ---------------------------------------------------------------------------
 # Arm actuator group helpers
 # ---------------------------------------------------------------------------
 _ARM_JOINT_EXPRS = [".*_shoulder_pitch", ".*_shoulder_roll", ".*_shoulder_yaw", ".*_elbow"]
-_ARM_MODEL_DIR = os.path.join(os.path.dirname(__file__), "../../input/actuator_models/h1")
 _ACTUATOR_MODELS_BASE = os.path.join(os.path.dirname(__file__), "../../input/actuator_models")
-
-
-def _arm_actuators_single_model(model_filename: str = "gru_fullarm_elbow_stateful_best.pt") -> dict:
-    """One LSTM/GRU for all arm joints (default behavior)."""
-    return {
-        "arms": ActuatorNetLSTMCfg(
-            joint_names_expr=_ARM_JOINT_EXPRS,
-            network_file=_ensure_torchscript(os.path.join(_ARM_MODEL_DIR, model_filename)),
-            saturation_effort=25.0,
-            effort_limit=25.0,
-            velocity_limit=13.5,
-        ),
-    }
-
-
-def _arm_actuators_per_joint(model_files: dict[str, str] | None = None) -> dict:
-    """Separate LSTM/GRU per joint type (left/right share same model).
-
-    Args:
-        model_files: Mapping from joint type to model filename, e.g.
-            {"shoulder_pitch": "shoulder_pitch.pt", "elbow": "elbow.pt"}.
-            Defaults to ``<joint_type>.pt`` for each joint type.
-    """
-    joint_types = ["shoulder_pitch", "shoulder_roll", "shoulder_yaw", "elbow"]
-    defaults = {jt: f"{jt}.pt" for jt in joint_types}
-    files = model_files or defaults
-
-    actuators = {}
-    for jt in joint_types:
-        fname = files.get(jt, f"{jt}.pt")
-        actuators[f"arms_{jt}"] = ActuatorNetLSTMCfg(
-            joint_names_expr=[f".*_{jt}"],
-            network_file=_ensure_torchscript(os.path.join(_ARM_MODEL_DIR, fname)),
-            saturation_effort=25.0,
-            effort_limit=25.0,
-            velocity_limit=13.5,
-        )
-    return actuators
 
 
 # Per-robot arm joint config: joint regex patterns, actuator group name, model subdir
@@ -479,6 +618,12 @@ _ROBOT_ARM_CFG = {
         "joint_exprs": [".*_shoulder_pitch", ".*_shoulder_roll", ".*_shoulder_yaw", ".*_elbow"],
         "group_name": "arms",
         "model_subdir": "h1",
+        "cross_joint_map": {
+            "raise": "right_shoulder_roll",
+            "pitch": "right_shoulder_pitch",
+            "yaw": "right_shoulder_yaw",
+            "elbow": "right_elbow",
+        },
     },
     "ur10e": {
         "joint_exprs": [".*"],
@@ -577,9 +722,31 @@ def _build_arm_actuators(run_cfg: dict, robot_name: str) -> dict:
             )
         }
 
+    elif model_type == "hybrid_residual":
+        # Hybrid residual: per-joint ImplicitActuator (solver PD active) + GRU residual
+        # patched after sim.reset(). Creates one actuator group per joint type so each
+        # can be patched with its own GRU network. Joints without GRU models get a
+        # plain ImplicitActuator (PD-only fallback).
+        if not yaml_file:
+            raise ValueError("actuator.yaml_file required for model_type=hybrid_residual")
+        network_files = act_cfg.get("network_files", {})
+        if not network_files:
+            raise ValueError("actuator.network_files dict required for model_type=hybrid_residual")
+        actuators = {}
+        # All arm joint types from the robot config
+        all_joint_types = [expr.replace(".*_", "") for expr in joint_exprs]
+        for jt in all_joint_types:
+            actuators[f"{group_name}_{jt}"] = load_implicit_actuator_cfg(yaml_file, [f".*_{jt}"])
+            if jt in network_files:
+                log_message(f"  {jt}: ImplicitActuator + GRU residual ({network_files[jt]})")
+            else:
+                log_message(f"  {jt}: ImplicitActuator (PD-only, no GRU model)")
+        return actuators
+
     else:
         raise ValueError(
-            f"Unknown actuator model_type '{model_type}'. Choose from: implicit, dcmotor, lstm, lstm_perjoint, fmu"
+            f"Unknown actuator model_type '{model_type}'. "
+            "Choose from: implicit, dcmotor, lstm, lstm_perjoint, fmu, hybrid_residual"
         )
 
 
@@ -662,17 +829,6 @@ class H1BenchmarkSceneCfg(InteractiveSceneCfg):
             #     "h1_arm_implicit.yaml",
             #     [".*_shoulder_pitch", ".*_shoulder_roll", ".*_shoulder_yaw", ".*_elbow"],
             # ),
-            # -----------------------------------------------------------------------------
-            # Distilled LSTM/GRU actuator net (learned from real H1 motor data).
-            # Newton bug fix + optional normalization applied via _patch_lstm_compute().
-            # Single model for all arm joints:
-            # **_arm_actuators_single_model(),
-            #
-            # Per-joint models (one LSTM/GRU per joint type, L/R share same model):
-            # **_arm_actuators_per_joint(),
-            #
-            # Per-joint with custom model files:
-            # **_arm_actuators_per_joint({"shoulder_pitch": "sp.pt", "elbow": "elbow.pt", ...}),
         },
     )
 
@@ -929,6 +1085,48 @@ class NewtonJointMotionBenchmark:
                 log_message(f"Patching '{name}' — model: {os.path.basename(actuator.cfg.network_file)}")
                 stats = _load_sysid_stats(actuator.cfg.network_file)
                 _patch_lstm_compute(actuator, sysid_stats=stats)
+
+        # Patch ImplicitActuator with hybrid residual GRU if model_type is hybrid_residual.
+        act_cfg = self._run_cfg.get("actuator", {})
+        if act_cfg.get("model_type") == "hybrid_residual":
+            network_files = act_cfg.get("network_files", {})
+            for name, actuator in self.robot.actuators.items():
+                if type(actuator).__name__ == "ImplicitActuator" and (
+                    name in ("arms", "arm") or name.startswith("arms_")
+                ):
+                    # Match actuator to its GRU network file by joint type
+                    matched_file = None
+                    matched_stats = None
+                    for jt, fname in network_files.items():
+                        # Check if this actuator covers this joint type
+                        if any(jt in jn for jn in actuator._joint_names):
+                            matched_file = os.path.join(_ACTUATOR_MODELS_BASE, fname)
+                            matched_stats = _load_sysid_stats(matched_file)
+                            # Add cols_in from stats for cross-joint resolution
+                            stats_raw = matched_stats.copy()
+                            stats_json_path = matched_file.replace(".pt", "_stats.json").replace(
+                                "_scripted_stats", "_stats"
+                            )
+                            if os.path.isfile(stats_json_path):
+                                with open(stats_json_path) as f:
+                                    raw = json.load(f)
+                                    stats_raw["cols_in"] = raw.get("cols_in", [])
+                                    # Add cross-joint stats (e.g. "raise_position") for neighbor lookups
+                                    # without shadowing canonical keys already set by _load_sysid_stats
+                                    for k, v in raw.get("normalization", {}).items():
+                                        if k not in stats_raw:
+                                            stats_raw[k] = v
+                            break
+                    if matched_file:
+                        log_message(f"Patching '{name}' with hybrid residual GRU: {os.path.basename(matched_file)}")
+                        arm_cfg = _ROBOT_ARM_CFG.get(self.robot_name, {})
+                        _patch_implicit_with_hybrid_residual(
+                            actuator,
+                            matched_file,
+                            self.robot,
+                            sysid_stats=stats_raw,
+                            cross_joint_map=arm_cfg.get("cross_joint_map"),
+                        )
 
         # Reset scene state
         self.scene.reset()
