@@ -1,3 +1,8 @@
+# Copyright (c) 2022-2026, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
 """Actuator model configs and loader utilities.
 
 Isaac Lab / Omniverse modules must not be imported at module level — they
@@ -25,6 +30,37 @@ def load_actuator_params(yaml_file: str) -> dict:
 
     with open(yaml_file) as f:
         return yaml.safe_load(f)
+
+
+def _filter_param(value, joint_names_expr: list[str]):
+    """Filter a dict-valued parameter to only include patterns matching joint_names_expr.
+
+    If value is a scalar or None, returns as-is. If value is a dict with regex keys,
+    keeps only entries whose pattern could match one of the joint_names_expr patterns.
+    This prevents Isaac Lab from raising ValueError for unmatched regex patterns
+    when a per-joint YAML is shared across multiple single-joint actuator groups.
+    """
+    import re
+
+    if not isinstance(value, dict) or not joint_names_expr:
+        return value
+    # Heuristic: both YAML keys and joint_names_expr use ".*_{suffix}" patterns.
+    # We match on the suffix portion. This assumes joint names don't have
+    # overlapping suffixes (e.g. "elbow" doesn't appear in "elbow_flex").
+    filtered = {}
+    for pattern, v in value.items():
+        # Check if this YAML pattern could match any joint covered by joint_names_expr.
+        # Both are regexes matching joint names like "right_shoulder_pitch".
+        # A simple heuristic: extract the suffix from the YAML pattern (e.g. "shoulder_pitch"
+        # from ".*_shoulder_pitch") and check if any joint_names_expr contains it.
+        for jne in joint_names_expr:
+            # If the core part of the pattern appears in the joint expression, keep it
+            pattern_core = pattern.replace(".*", "").strip("_")
+            jne_core = jne.replace(".*", "").strip("_")
+            if pattern_core == jne_core or re.search(pattern_core, jne_core) or re.search(jne_core, pattern_core):
+                filtered[pattern] = v
+                break
+    return filtered if filtered else value
 
 
 def load_implicit_actuator_cfg(yaml_file: str, joint_names_expr: list[str]):
@@ -57,10 +93,12 @@ def load_implicit_actuator_cfg(yaml_file: str, joint_names_expr: list[str]):
         joint_names_expr=joint_names_expr,
         effort_limit_sim=params.get("effort_limit_sim"),
         velocity_limit_sim=params.get("velocity_limit_sim"),
-        stiffness=params["stiffness"],
-        damping=params["damping"],
-        armature=params.get("armature"),
-        friction=params.get("friction"),
+        stiffness=_filter_param(params["stiffness"], joint_names_expr),
+        damping=_filter_param(params["damping"], joint_names_expr),
+        armature=_filter_param(params.get("armature"), joint_names_expr),
+        friction=_filter_param(params.get("friction"), joint_names_expr),
+        dynamic_friction=_filter_param(params.get("dynamic_friction"), joint_names_expr),
+        viscous_friction=_filter_param(params.get("viscous_friction"), joint_names_expr),
     )
 
 

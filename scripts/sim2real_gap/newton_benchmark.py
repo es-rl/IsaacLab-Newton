@@ -1,3 +1,8 @@
+# Copyright (c) 2022-2026, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
 """Newton-backend joint motion benchmark, compatible with SAGE CSV output format.
 
 This module provides a Newton physics adaptation of SAGE's JointMotionBenchmark.
@@ -21,7 +26,9 @@ from tqdm import tqdm
 import isaaclab.sim as sim_utils
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "input"))
-from actuator_models import load_actuator_params, load_implicit_actuator_cfg
+from actuator_models import load_actuator_params, load_dc_motor_cfg, load_fmu_actuator_cfg, load_implicit_actuator_cfg
+from spawn_utils import spawn_from_usd_with_fixed_base
+
 from isaaclab.actuators import ActuatorNetLSTMCfg, ImplicitActuatorCfg
 from isaaclab.assets import ArticulationCfg, AssetBaseCfg
 from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
@@ -29,10 +36,6 @@ from isaaclab.sim import SimulationCfg, SimulationContext
 from isaaclab.utils import configclass
 
 from isaaclab_assets.robots.unitree import H1_MINIMAL_CFG
-
-from spawn_utils import spawn_from_usd_with_fixed_base
-
-from actuator_models import load_dc_motor_cfg, load_fmu_actuator_cfg
 
 # Local USD assets (avoids dependency on cloud-hosted Omniverse Nucleus server)
 _H1_LOCAL_USD = os.path.abspath(
@@ -123,31 +126,35 @@ def _ensure_torchscript(pt_path: str) -> str:
     weight_key = f"{rnn_prefix}.weight_ih_l0"
     input_size = state_dict[weight_key].shape[1]
     hidden_dim = state_dict[weight_key].shape[0] // gate_factor
-    num_layers = max(
-        int(k.split("_l")[1].split(".")[0])
-        for k in state_dict
-        if k.startswith(f"{rnn_prefix}.") and "_l" in k
-    ) + 1
+    num_layers = (
+        max(int(k.split("_l")[1].split(".")[0]) for k in state_dict if k.startswith(f"{rnn_prefix}.") and "_l" in k) + 1
+    )
 
     if has_lstm:
+
         class _IsaacLabRNNWrapper(nn.Module):
             """TorqueLSTM wrapped to match Isaac Lab's ActuatorNetLSTM interface."""
 
             def __init__(self):
                 super().__init__()
                 self.lstm = nn.LSTM(
-                    input_size=input_size, hidden_size=hidden_dim,
-                    num_layers=num_layers, batch_first=True,
+                    input_size=input_size,
+                    hidden_size=hidden_dim,
+                    num_layers=num_layers,
+                    batch_first=True,
                 )
                 self.head = nn.Linear(hidden_dim, 1)
 
             def forward(
-                self, x: torch.Tensor, hx: tuple[torch.Tensor, torch.Tensor],
+                self,
+                x: torch.Tensor,
+                hx: tuple[torch.Tensor, torch.Tensor],
             ) -> tuple[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]:
                 out, (h_new, c_new) = self.lstm(x, hx)
                 torque = self.head(out[:, -1, :])
                 return torque, (h_new, c_new)
     else:
+
         class _IsaacLabRNNWrapper(nn.Module):
             """TorqueGRU wrapped to match Isaac Lab's ActuatorNetLSTM interface.
 
@@ -165,13 +172,17 @@ def _ensure_torchscript(pt_path: str) -> str:
                 # Named 'lstm' so Newton's ActuatorNetLSTM.__init__ resolves
                 # self.network.lstm correctly
                 self.lstm = nn.GRU(
-                    input_size=input_size, hidden_size=hidden_dim,
-                    num_layers=num_layers, batch_first=True,
+                    input_size=input_size,
+                    hidden_size=hidden_dim,
+                    num_layers=num_layers,
+                    batch_first=True,
                 )
                 self.head = nn.Linear(hidden_dim, 1)
 
             def forward(
-                self, x: torch.Tensor, hx: tuple[torch.Tensor, torch.Tensor],
+                self,
+                x: torch.Tensor,
+                hx: tuple[torch.Tensor, torch.Tensor],
             ) -> tuple[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]:
                 h, c_passthrough = hx
                 out, h_new = self.lstm(x, h)
@@ -211,10 +222,10 @@ def _ensure_torchscript(pt_path: str) -> str:
 # Normalization stats for the sysid LSTM (3-input model: position, position_error, velocity).
 # Pre-computed from the type 3 experiment dataset (12.24M samples).
 _SYSID_STATS = {
-    "position":       {"mean":  0.7976, "std": 0.2867, "p1": -0.1217, "p99": 1.7152},
+    "position": {"mean": 0.7976, "std": 0.2867, "p1": -0.1217, "p99": 1.7152},
     "position_error": {"mean": -0.0122, "std": 0.1438, "p1": -0.5197, "p99": 0.3289},
-    "velocity":       {"mean": -0.0166, "std": 2.5782, "p1": -7.0728, "p99": 7.0962},
-    "torque":         {"mean": -0.0091, "std": 3.8534, "p1": -12.9865, "p99": 12.9973},
+    "velocity": {"mean": -0.0166, "std": 2.5782, "p1": -7.0728, "p99": 7.0962},
+    "torque": {"mean": -0.0091, "std": 3.8534, "p1": -12.9865, "p99": 12.9973},
 }
 
 
@@ -242,10 +253,7 @@ def _load_sysid_stats(network_file: str) -> dict:
             break
 
     if stats_path is None:
-        log_message(
-            f"  Stats: using global fallback (_SYSID_STATS) — "
-            f"no sidecar found at {candidates[0]}"
-        )
+        log_message(f"  Stats: using global fallback (_SYSID_STATS) — no sidecar found at {candidates[0]}")
         _log_norm_stats(_SYSID_STATS, "global fallback")
         return _SYSID_STATS
 
@@ -290,28 +298,27 @@ def _log_norm_stats(stats: dict, source: str):
         s = stats.get(k)
         if s is None:
             continue
-        log_message(
-            f"  {k:>16s}  {s['mean']:>8.4f}  {s['std']:>8.4f}  "
-            f"{s['p1']:>8.4f}  {s['p99']:>8.4f}"
-        )
+        log_message(f"  {k:>16s}  {s['mean']:>8.4f}  {s['std']:>8.4f}  {s['p1']:>8.4f}  {s['p99']:>8.4f}")
 
 
 def _patch_lstm_compute(actuator, sysid_stats=None):
-    """Updates ActuatorNetLSTM.compute() to fix Newton's joint indexing bug.
+    """Patch ActuatorNetLSTM.compute() to support 3-input sysid models with normalization.
 
-    Newton's ActuatorNetLSTM.compute() reads from shared full-robot data arrays
-    (all joints) but sea_input is sized for this actuator's joints only. This
-    patch properly indexes to the actuator's joints using self._joint_indices.
+    The stock ActuatorNetLSTM.compute() hardcodes 2-input (pos_error, velocity) and
+    allocates sea_input with 2 channels. Sysid-trained models use 3 inputs (position,
+    pos_error, velocity) with percentile clipping + z-normalization. This patch:
 
-    Also fixes the output side: scatters computed torques to correct positions
-    in the full-robot _computed_effort array (Newton's code replaces the whole
-    array with a smaller one), and uses self._num_joints for the final Warp
-    kernel dim so the boolean joint_mask indexes correctly.
+    1. Resizes sea_input/hidden state buffers if the network architecture differs
+       from what the stock __init__ allocated.
+    2. Applies normalization for 3-input sysid models (clip to [p1, p99], z-normalize).
+    3. Denormalizes the output torque back to physical units.
 
-    Supports two model types:
-    - 3-input sysid model (position, position_error, velocity): uses sysid_stats
-      (or global _SYSID_STATS fallback) for normalization with percentile clipping
-    - 2-input model (pos_error, velocity): raw inputs, no normalization
+    For 2-input models, the patch still applies to ensure buffer sizes are correct,
+    but no normalization is performed (matching stock behavior).
+
+    The patched function matches the original compute() signature so Newton's
+    _apply_actuator_model() can call it correctly:
+        compute(control_action, joint_pos, joint_vel) -> control_action
 
     Args:
         actuator: Newton ActuatorNetLSTM instance to patch.
@@ -346,7 +353,7 @@ def _patch_lstm_compute(actuator, sysid_stats=None):
         actuator.sea_cell_state = torch.zeros(num_layers, n, hidden_size, device=actuator._device)
 
     # --- Normalization setup ---
-    use_sysid_norm = (input_size == 3)
+    use_sysid_norm = input_size == 3
     stats = sysid_stats or _SYSID_STATS
 
     if use_sysid_norm:
@@ -365,23 +372,19 @@ def _patch_lstm_compute(actuator, sysid_stats=None):
         vel_p99 = stats["velocity"]["p99"]
         torque_mean = stats["torque"]["mean"]
         torque_std = stats["torque"]["std"]
-        torque_p1 = stats["torque"]["p1"]
-        torque_p99 = stats["torque"]["p99"]
         log_message("Patching with sysid normalization + clipping (3-input: position, position_error, velocity)")
     else:
         # 2-input model: [pos_error, velocity] without normalization
-        log_message(f"Patching ActuatorNetLSTM to fix Newton joint indexing ({input_size}-input, no normalization)")
+        log_message(f"Patching ActuatorNetLSTM ({input_size}-input, no normalization)")
 
-    def patched_compute(self):
-        from isaaclab.utils.warp.update_kernels import update_array2D_with_array2D_masked
+    def patched_compute(self, control_action, joint_pos, joint_vel):
+        # Newton's _apply_actuator_model already indexes to this actuator's joints:
+        #   joint_pos = data.joint_pos[:, actuator.joint_indices]
+        #   joint_vel = data.joint_vel[:, actuator.joint_indices]
+        #   control_action.joint_positions = data.joint_pos_target[:, actuator.joint_indices]
+        # So the data is already correctly shaped for this actuator group.
 
-        # FIX: Index to actuator joints from full-robot data arrays
-        indices = self._joint_indices
-        pos_target = wp.to_torch(self.data._actuator_position_target)[:, indices]
-        joint_pos = wp.to_torch(self.data._sim_bind_joint_pos)[:, indices]
-        joint_vel = wp.to_torch(self.data._sim_bind_joint_vel)[:, indices]
-
-        pos_error = (pos_target - joint_pos).flatten()
+        pos_error = (control_action.joint_positions - joint_pos).flatten()
         vel = joint_vel.flatten()
 
         if use_sysid_norm:
@@ -398,7 +401,7 @@ def _patch_lstm_compute(actuator, sysid_stats=None):
             self.sea_input[:, 0, 0] = pos_error
             self.sea_input[:, 0, 1] = vel
 
-        # Run LSTM inference
+        # Run network inference
         with torch.inference_mode():
             torques, (self.sea_hidden_state[:], self.sea_cell_state[:]) = self.network(
                 self.sea_input, (self.sea_hidden_state, self.sea_cell_state)
@@ -407,27 +410,20 @@ def _patch_lstm_compute(actuator, sysid_stats=None):
         if use_sysid_norm:
             torques = torques * torque_std + torque_mean
 
-        # FIX: Scatter to correct positions in full-robot array (wp.to_torch is zero-copy)
-        computed_effort = wp.to_torch(self.data._computed_effort)
-        computed_effort[:, indices] = torques.reshape(self._num_envs, self.num_joints)
+        # Set computed/applied effort on the actuator (matching stock ActuatorNetLSTM)
+        self.computed_effort = torques.reshape(self._num_envs, self.num_joints)
+        self._joint_vel[:] = joint_vel  # needed for DCMotor._clip_effort velocity-dependent saturation
+        self.applied_effort = self._clip_effort(self.computed_effort)
 
-        # Clip based on motor limits (DCMotor._clip_effort uses Warp kernel with mask)
-        self._clip_effort(self.data._computed_effort, self.data._applied_effort)
-
-        # FIX: Use self._num_joints (all joints) so boolean mask indexes correctly
-        wp.launch(
-            update_array2D_with_array2D_masked,
-            dim=(self._num_envs, self._num_joints),
-            inputs=[
-                self.data._applied_effort,
-                self.data.joint_effort,
-                self._env_mask,
-                self._joint_mask,
-            ],
-            device=self._device,
-        )
+        # Return control_action with efforts set (positions/velocities cleared
+        # so Newton applies torques directly, not implicit PD)
+        control_action.joint_efforts = self.applied_effort
+        control_action.joint_positions = None
+        control_action.joint_velocities = None
+        return control_action
 
     import types
+
     actuator.compute = types.MethodType(patched_compute, actuator)
 
 
@@ -540,13 +536,15 @@ def _build_arm_actuators(run_cfg: dict, robot_name: str) -> dict:
         network_file = act_cfg.get("network_file")
         if not network_file:
             raise ValueError("actuator.network_file required for model_type=lstm/gru")
-        return {group_name: ActuatorNetLSTMCfg(
-            joint_names_expr=joint_exprs,
-            network_file=_ensure_torchscript(os.path.join(_ACTUATOR_MODELS_BASE, network_file)),
-            saturation_effort=25.0,
-            effort_limit=25.0,
-            velocity_limit=13.5,
-        )}
+        return {
+            group_name: ActuatorNetLSTMCfg(
+                joint_names_expr=joint_exprs,
+                network_file=_ensure_torchscript(os.path.join(_ACTUATOR_MODELS_BASE, network_file)),
+                saturation_effort=25.0,
+                effort_limit=25.0,
+                velocity_limit=13.5,
+            )
+        }
 
     elif model_type == "lstm_perjoint":
         network_files = act_cfg.get("network_files", {})
@@ -570,23 +568,25 @@ def _build_arm_actuators(run_cfg: dict, robot_name: str) -> dict:
         if not yaml_file:
             raise ValueError("actuator.yaml_file required for model_type=fmu (PD gains for torque_pred)")
         fmu_step = act_cfg.get("fmu_step_size", 0.002)
-        return {group_name: load_fmu_actuator_cfg(
-            yaml_file=yaml_file,
-            fmu_path=fmu_dir,
-            joint_names_expr=joint_exprs,
-            fmu_step_size=fmu_step,
-        )}
+        return {
+            group_name: load_fmu_actuator_cfg(
+                yaml_file=yaml_file,
+                fmu_path=fmu_dir,
+                joint_names_expr=joint_exprs,
+                fmu_step_size=fmu_step,
+            )
+        }
 
     else:
         raise ValueError(
-            f"Unknown actuator model_type '{model_type}'. "
-            "Choose from: implicit, dcmotor, lstm, lstm_perjoint, fmu"
+            f"Unknown actuator model_type '{model_type}'. Choose from: implicit, dcmotor, lstm, lstm_perjoint, fmu"
         )
 
 
 # ---------------------------------------------------------------------------
 # Scene configuration for single-env benchmark
 # ---------------------------------------------------------------------------
+
 
 @configclass
 class H1BenchmarkSceneCfg(InteractiveSceneCfg):
@@ -621,12 +621,18 @@ class H1BenchmarkSceneCfg(InteractiveSceneCfg):
                 joint_names_expr=[".*_hip_yaw", ".*_hip_roll", ".*_hip_pitch", ".*_knee", "torso"],
                 effort_limit_sim=300,
                 stiffness={
-                    ".*_hip_yaw": 50.0, ".*_hip_roll": 50.0,
-                    ".*_hip_pitch": 100.0, ".*_knee": 100.0, "torso": 100.0,
+                    ".*_hip_yaw": 50.0,
+                    ".*_hip_roll": 50.0,
+                    ".*_hip_pitch": 100.0,
+                    ".*_knee": 100.0,
+                    "torso": 100.0,
                 },
                 damping={
-                    ".*_hip_yaw": 5.0, ".*_hip_roll": 5.0,
-                    ".*_hip_pitch": 5.0, ".*_knee": 5.0, "torso": 5.0,
+                    ".*_hip_yaw": 5.0,
+                    ".*_hip_roll": 5.0,
+                    ".*_hip_pitch": 5.0,
+                    ".*_knee": 5.0,
+                    "torso": 5.0,
                 },
             ),
             "feet": ImplicitActuatorCfg(
@@ -798,6 +804,7 @@ class NewtonJointMotionBenchmark:
 
         # Load per-robot run config for solver/buffer settings
         from run_configs import load_run_cfg
+
         self._run_cfg = load_run_cfg(self.robot_name)
 
         # Resolve actuator YAML: run config > _BENCHMARK_ROBOT_CONFIGS fallback
@@ -839,9 +846,7 @@ class NewtonJointMotionBenchmark:
         if self.valid_joints_file is not None:
             config_file = self.valid_joints_file
         else:
-            config_file = os.path.join(
-                os.path.dirname(__file__), "configs", f"{self.robot_name}_valid_joints.txt"
-            )
+            config_file = os.path.join(os.path.dirname(__file__), "configs", f"{self.robot_name}_valid_joints.txt")
 
         if not os.path.isfile(config_file):
             self.set_valid_joints = False
@@ -862,7 +867,8 @@ class NewtonJointMotionBenchmark:
             gravity=(0.0, 0.0, -9.81),
         )
         _sim_section = self._run_cfg.get("simulation", {})
-        from isaaclab_newton.physics import NewtonCfg, MJWarpSolverCfg
+        from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg
+
         sim_cfg.physics = NewtonCfg(
             use_cuda_graph=False,
             solver_cfg=MJWarpSolverCfg(
@@ -877,18 +883,14 @@ class NewtonJointMotionBenchmark:
         # Build scene config from robot-specific class
         robot_cfg = _BENCHMARK_ROBOT_CONFIGS.get(self.robot_name)
         if robot_cfg is None:
-            raise ValueError(
-                f"Unknown robot '{self.robot_name}'. "
-                f"Available: {list(_BENCHMARK_ROBOT_CONFIGS.keys())}"
-            )
+            raise ValueError(f"Unknown robot '{self.robot_name}'. Available: {list(_BENCHMARK_ROBOT_CONFIGS.keys())}")
         scene_cfg = robot_cfg["scene_cfg_cls"](num_envs=self._num_envs, env_spacing=4.0)
 
         # Override arm actuators from run config (actuator section)
         new_arm = _build_arm_actuators(self._run_cfg, self.robot_name)
         if new_arm is not None:
             # Remove old arm actuator key(s) from scene config
-            old_keys = [k for k in scene_cfg.robot.actuators
-                        if k in ("arms", "arm") or k.startswith("arms_")]
+            old_keys = [k for k in scene_cfg.robot.actuators if k in ("arms", "arm") or k.startswith("arms_")]
             for k in old_keys:
                 del scene_cfg.robot.actuators[k]
             scene_cfg.robot.actuators.update(new_arm)
@@ -1102,7 +1104,9 @@ class NewtonJointMotionBenchmark:
                 for w in range(dof_np.shape[0]):
                     dof_np[w, :num_dofs] = viscous_vals
             dof_damping.assign(dof_np)
-            log_message(f"Applied viscous_friction to Newton dof_passive_damping: {viscous_vals[viscous_vals > 0].tolist()}")
+            log_message(
+                f"Applied viscous_friction to Newton dof_passive_damping: {viscous_vals[viscous_vals > 0].tolist()}"
+            )
 
     def _log_motor_params(self):
         """Print actuator parameters for each group in a table."""
@@ -1257,8 +1261,12 @@ class NewtonJointMotionBenchmark:
     def _init_logger(self):
         """Create output directory and CSV files in SAGE-compatible format."""
         self.sim_output_folder = os.path.join(
-            self.output_folder, "sim", self.robot_name, self.motion_source,
-            self._actuator_suffix, self.motion_name,
+            self.output_folder,
+            "sim",
+            self.robot_name,
+            self.motion_source,
+            self._actuator_suffix,
+            self.motion_name,
         )
         os.makedirs(self.sim_output_folder, exist_ok=True)
 
@@ -1282,13 +1290,16 @@ class NewtonJointMotionBenchmark:
         SAGE format (convert_h1_chirp_to_csv.py writes timestamps in µs).
         """
         ts_us = time * 1e6  # seconds -> microseconds
-        self._control_rows.append(
-            ["CONTROL", f"{ts_us:.1f}", command_positions.tolist()]
-        )
+        self._control_rows.append(["CONTROL", f"{ts_us:.1f}", command_positions.tolist()])
         self._state_rows.append(
-            ["STATE_MOTOR", f"{ts_us:.1f}", actual_positions.tolist(),
-             actual_velocities.tolist(), actual_efforts.tolist()]
-            )
+            [
+                "STATE_MOTOR",
+                f"{ts_us:.1f}",
+                actual_positions.tolist(),
+                actual_velocities.tolist(),
+                actual_efforts.tolist(),
+            ]
+        )
 
     def _flush_logs(self):
         """Write buffered CSV rows to disk in one batch."""
@@ -1330,7 +1341,9 @@ class NewtonJointMotionBenchmark:
 
         total_steps = buffer_control_steps * self.divisor + num_steps * self.divisor
         pbar = tqdm(
-            total=total_steps, desc=self.motion_name, unit="step",
+            total=total_steps,
+            desc=self.motion_name,
+            unit="step",
             bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]",
         )
 
@@ -1343,9 +1356,7 @@ class NewtonJointMotionBenchmark:
 
                 joint_pos = self._to_torch(self.robot.data.joint_pos)
                 target = joint_pos.clone()
-                target[0, self.joint_indices] = torch.tensor(
-                    interp_pos, dtype=torch.float32, device=self.robot.device
-                )
+                target[0, self.joint_indices] = torch.tensor(interp_pos, dtype=torch.float32, device=self.robot.device)
                 self.robot.set_joint_position_target(target)
 
             self._sim_step()
@@ -1355,9 +1366,7 @@ class NewtonJointMotionBenchmark:
 
         joint_pos = self._to_torch(self.robot.data.joint_pos)
         current_pos = joint_pos[0, self.joint_indices].cpu().numpy()
-        tqdm.write(
-            f"[Benchmark] Buffer done. Starting motion ({num_steps} control steps)..."
-        )
+        tqdm.write(f"[Benchmark] Buffer done. Starting motion ({num_steps} control steps)...")
 
         # --- Command delay buffer ---
         # Delays position targets by self.motor_lag_steps physics steps to model
@@ -1431,10 +1440,7 @@ class NewtonJointMotionBenchmark:
         self._flush_logs()
 
         final_pos = self._to_torch(self.robot.data.joint_pos)[0, self.joint_indices].cpu().numpy()
-        tqdm.write(
-            f"[Benchmark] {self.motion_name} done — {counter + 1} steps, "
-            f"saved to {self.sim_output_folder}"
-        )
+        tqdm.write(f"[Benchmark] {self.motion_name} done — {counter + 1} steps, saved to {self.sim_output_folder}")
 
     def run_benchmark_batch(self, motions):
         """Run multiple motions in parallel across environments.
@@ -1444,10 +1450,7 @@ class NewtonJointMotionBenchmark:
                 match ``self._num_envs``.
         """
         if len(motions) != self._num_envs:
-            raise ValueError(
-                f"Got {len(motions)} motions but {self._num_envs} envs. "
-                f"These must match."
-            )
+            raise ValueError(f"Got {len(motions)} motions but {self._num_envs} envs. These must match.")
 
         n_envs = self._num_envs
 
@@ -1474,23 +1477,25 @@ class NewtonJointMotionBenchmark:
 
             # Set up per-env output directory
             self._init_logger()
-            per_env_loggers.append({
-                "folder": self.sim_output_folder,
-                "control_file": self.control_file,
-                "dof_file": self.dof_file,
-                "control_rows": [],
-                "state_rows": [],
-            })
+            per_env_loggers.append(
+                {
+                    "folder": self.sim_output_folder,
+                    "control_file": self.control_file,
+                    "dof_file": self.dof_file,
+                    "control_rows": [],
+                    "state_rows": [],
+                }
+            )
 
         # Pad to max length
         max_steps = max(a.shape[0] for a in all_angles)
         motion_lengths = [a.shape[0] for a in all_angles]
         padded = np.zeros((n_envs, max_steps, num_joints), dtype=np.float64)
         for i, arr in enumerate(all_angles):
-            padded[i, :arr.shape[0]] = arr
+            padded[i, : arr.shape[0]] = arr
             # Hold final position for padding region
             if arr.shape[0] < max_steps:
-                padded[i, arr.shape[0]:] = arr[-1]
+                padded[i, arr.shape[0] :] = arr[-1]
 
         log_message(f"Batched {n_envs} motions (max {max_steps} steps, {num_joints} joints)")
         for i, (mlen, mname) in enumerate(zip(motion_lengths, all_names)):
@@ -1510,7 +1515,8 @@ class NewtonJointMotionBenchmark:
         total_steps = buffer_control_steps * self.divisor + max_steps * self.divisor
         pbar = tqdm(
             total=total_steps,
-            desc=f"Batch ({n_envs} envs)", unit="step",
+            desc=f"Batch ({n_envs} envs)",
+            unit="step",
             bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]",
         )
 
@@ -1600,14 +1606,15 @@ class NewtonJointMotionBenchmark:
                     if index < motion_lengths[env_idx]:
                         ts_us = adjusted_time * 1e6
                         cmd_pos = padded[env_idx, index]
-                        per_env_loggers[env_idx]["control_rows"].append(
-                            ["CONTROL", f"{ts_us:.1f}", cmd_pos.tolist()]
-                        )
+                        per_env_loggers[env_idx]["control_rows"].append(["CONTROL", f"{ts_us:.1f}", cmd_pos.tolist()])
                         per_env_loggers[env_idx]["state_rows"].append(
-                            ["STATE_MOTOR", f"{ts_us:.1f}",
-                             act_pos_all[env_idx].tolist(),
-                             act_vel_all[env_idx].tolist(),
-                             act_eff_all[env_idx].tolist()]
+                            [
+                                "STATE_MOTOR",
+                                f"{ts_us:.1f}",
+                                act_pos_all[env_idx].tolist(),
+                                act_vel_all[env_idx].tolist(),
+                                act_eff_all[env_idx].tolist(),
+                            ]
                         )
 
         pbar.close()
@@ -1624,10 +1631,7 @@ class NewtonJointMotionBenchmark:
                 writer.writerow(["type", "timestamp", "positions", "velocities", "torques"])
                 writer.writerows(logger["state_rows"])
 
-            tqdm.write(
-                f"  {all_names[env_idx]}: {len(logger['control_rows'])} rows "
-                f"-> {logger['folder']}"
-            )
+            tqdm.write(f"  {all_names[env_idx]}: {len(logger['control_rows'])} rows -> {logger['folder']}")
 
         tqdm.write(f"[Benchmark] Batch complete — {n_envs} motions processed in parallel")
 
