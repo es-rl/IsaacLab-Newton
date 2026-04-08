@@ -44,6 +44,9 @@ _UR10_LOCAL_USD = os.path.abspath(
 _TESTSTAND_LOCAL_USD = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "../../input/robot_models/teststand/teststand.usda")
 )
+_RIZON4S_LOCAL_USD = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "../../input/robot_models/rizon/Rizon4s_with_Grav.usd")
+)
 
 # Reuse SAGE's pure-Python utility functions
 from sage.simulation import get_motion_files, get_motion_name, log_message  # noqa: F401
@@ -489,6 +492,11 @@ _ROBOT_ARM_CFG = {
         "group_name": "arm",
         "model_subdir": "ur10e",
     },
+    "rizon4s": {
+        "joint_exprs": ["joint[1-7]"],
+        "group_name": "arm",
+        "model_subdir": "rizon4s",
+    },
     "teststand": {
         "joint_exprs": ["elbow"],
         "group_name": "arm",
@@ -713,6 +721,43 @@ class Ur10eBenchmarkSceneCfg(InteractiveSceneCfg):
 
 
 @configclass
+class Rizon4sBenchmarkSceneCfg(InteractiveSceneCfg):
+    """Scene with Flexiv Rizon 4s robot for motion benchmarking."""
+
+    ground = AssetBaseCfg(
+        prim_path="/World/ground",
+        spawn=sim_utils.GroundPlaneCfg(size=(100.0, 100.0)),
+    )
+
+    robot: ArticulationCfg = ArticulationCfg(
+        prim_path="{ENV_REGEX_NS}/Robot",
+        spawn=sim_utils.UsdFileCfg(usd_path=_RIZON4S_LOCAL_USD),
+        init_state=ArticulationCfg.InitialStateCfg(
+            joint_pos={
+                "joint1": 0.0,
+                "joint2": -0.698,
+                "joint3": 0.0,
+                "joint4": 1.571,
+                "joint5": 0.0,
+                "joint6": 0.698,
+                "joint7": 0.0,
+            },
+        ),
+        actuators={
+            "arm": load_implicit_actuator_cfg(
+                "rizon4s/rizon4s_implicit.yaml",
+                ["joint[1-7]"],
+            ),
+        },
+    )
+
+    dome_light = AssetBaseCfg(
+        prim_path="/World/DomeLight",
+        spawn=sim_utils.DomeLightCfg(color=(0.9, 0.9, 0.9), intensity=500.0),
+    )
+
+
+@configclass
 class TestStandBenchmarkSceneCfg(InteractiveSceneCfg):
     """Scene with single motor teststand (base cylinder + arm bar + revolute elbow).
 
@@ -761,6 +806,10 @@ _BENCHMARK_ROBOT_CONFIGS = {
     "ur10e": {
         "scene_cfg_cls": Ur10eBenchmarkSceneCfg,
         "actuator_yaml": "ur10e/ur10e_implicit.yaml",
+    },
+    "rizon4s": {
+        "scene_cfg_cls": Rizon4sBenchmarkSceneCfg,
+        "actuator_yaml": "rizon4s/rizon4s_implicit.yaml",
     },
     "teststand": {
         "scene_cfg_cls": TestStandBenchmarkSceneCfg,

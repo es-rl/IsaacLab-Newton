@@ -1,0 +1,46 @@
+# Flexiv Rizon 4s arm system identification parameter bounds
+# 7 joints (no left/right mirroring): joint1 through joint7
+#
+# CMA-ES optimizes these in normalized [-1, 1] space with linear mapping to bounds.
+# Move stiffness/damping from "fixed" to "parameters" to include them in optimization.
+
+mirror: false
+
+joint_types:
+  - joint1
+  - joint2
+  - joint3
+  - joint4
+  - joint5
+  - joint6
+  - joint7
+
+parameters:
+  armature:
+    lower: 0.0
+    upper: 0.5
+  dynamic_friction:
+    lower: 0.0
+    upper: 5.0
+  viscous_friction:
+    lower: 0.0
+    upper: 5.0
+  # Uncomment to also optimize PD gains per joint:
+  stiffness:
+    lower: 100.0
+    upper: 8000.0
+  damping:
+    lower: 5.0
+    upper: 200.0
+
+# Fixed parameters (not optimized, written to best_params.yaml for reference)
+fixed:
+  # stiffness: 3000.0      # kp (used when stiffness is not in parameters above)
+  # damping: 80.0          # kd (used when damping is not in parameters above)
+  motor_lag_ms: 0.0      # no command delay (update after real-robot measurement)
+
+# CMA-ES defaults (can be overridden via CLI)
+cmaes:
+  sigma: 0.5
+  max_iterations: 200
+  epsilon: 0.01

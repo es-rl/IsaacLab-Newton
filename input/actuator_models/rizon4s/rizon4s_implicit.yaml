@@ -1,0 +1,58 @@
+# Flexiv Rizon 4s arm motor parameters
+#
+# Implicit PD control with motor mechanical parameters.
+# armature and friction are applied directly by the Newton solver.
+# Source: Flexiv Rizon 4s specs (nominal) — run sysid for calibrated values.
+#
+# Joint grouping:
+#   shoulder:  joint1, joint2    (123 N-m rated)
+#   elbow:     joint3, joint4    ( 64 N-m rated)
+#   wrist:     joint5, joint6, joint7 ( 39 N-m rated)
+
+# Effort/velocity limits (enforced by physics engine)
+effort_limit_sim: 123.0           # N-m  (shoulder limit — highest rated joint)
+velocity_limit_sim: 2.094         # rad/s (shoulder limit — most restrictive)
+
+# PD gains — per-joint from Flexiv specs (nominal, pre-sysid)
+stiffness:
+  joint1: 6000.0
+  joint2: 6000.0
+  joint3: 4200.0
+  joint4: 4200.0
+  joint5: 1500.0
+  joint6: 1500.0
+  joint7: 1500.0
+damping:
+  joint1: 108.5
+  joint2: 108.5
+  joint3: 90.7
+  joint4: 90.7
+  joint5: 54.2
+  joint6: 54.2
+  joint7: 54.2
+
+# Mechanical parameters — zero until sysid is run
+armature:
+  joint1: 0.0
+  joint2: 0.0
+  joint3: 0.0
+  joint4: 0.0
+  joint5: 0.0
+  joint6: 0.0
+  joint7: 0.0
+dynamic_friction:
+  joint1: 0.0
+  joint2: 0.0
+  joint3: 0.0
+  joint4: 0.0
+  joint5: 0.0
+  joint6: 0.0
+  joint7: 0.0
+viscous_friction:
+  joint1: 0.0
+  joint2: 0.0
+  joint3: 0.0
+  joint4: 0.0
+  joint5: 0.0
+  joint6: 0.0
+  joint7: 0.0
