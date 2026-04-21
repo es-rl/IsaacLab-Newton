@@ -1,6 +1,28 @@
 Changelog
 ---------
 
+1.5.23 (2026-04-21)
+~~~~~~~~~~~~~~~~~~~
+
+Fixed
+^^^^^
+
+* Refreshed Newton Warp renderer golden images for Dexsuite Kuka-Allegro environment case in
+  ``test_rendering_correctness`` because Newton Warp renderer honors visibility of prims now.
+
+1.5.22 (2026-04-20)
+~~~~~~~~~~~~~~~~~~~
+
+Fixed
+^^^^^
+
+* Fixed rendering correctness tests to use a shared environment seed constant, pass ``seed`` into
+  :meth:`gymnasium.Env.reset`, and aggregate per-data-type validation failures into a single
+  ``pytest.fail`` message in ``test_rendering_correctness``.
+* Refreshed Newton Warp renderer golden images in ``test_rendering_correctness`` so image baselines match the current
+  camera output after Newton shape color alignment and the clear background color change.
+
+
 1.5.21 (2026-04-13)
 ~~~~~~~~~~~~~~~~~~~
 
