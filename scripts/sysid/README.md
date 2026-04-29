@@ -193,6 +193,30 @@ python scripts/sysid/run_sysid.py \
 
 Optimized parameters are written to `best_params.yaml`. Copy per-joint values into `input/actuator_models/ur10e/ur10e_implicit.yaml` (keys must match joint names, e.g. `shoulder_pan_joint`, `elbow_joint`).
 
+### SO-101
+
+To run sysid on a Lerobot SO-101 arm:
+
+1. Place real motor data at `input/sysid_data/so101/<motion>/{control.csv, state_motor.csv, joint_list.txt}`.
+   IMPORTANT: `control.csv` and `state_motor.csv` must have the same number of
+   rows, with row index = wall-clock time. If you collect at different
+   rates (e.g. 50 Hz control / 500 Hz state from the hirate collector),
+   align by nearest-timestamp pairing in your data-prep script before
+   feeding into sysid.
+
+2. Edit `input/run_configs/so101/so101.yaml` — fill in `motion_files` and
+   `real_data_dir` placeholders.
+
+3. Run sysid:
+   ```bash
+   python scripts/sysid/run_sysid.py --robot-name so101 --headless
+   ```
+
+The starting actuator template at `input/actuator_models/so101/so101_implicit.yaml`
+uses STS3215 datasheet defaults. CMA-ES will fill in armature and friction
+from your real data. Joint names: `Rotation`, `Pitch`, `Elbow`, `Wrist_Pitch`,
+`Wrist_Roll`, `Jaw`.
+
 ## Runtime Configuration
 
 Per-robot settings live in `input/run_configs/<robot>/<robot>.yaml`. This means you don't need to pass `--physics-freq`, `--num-envs`, etc. on every run — just set them once in the YAML. Bounds YAML files live alongside the run config.
@@ -532,9 +556,10 @@ Add `--visualizer newton` instead of `--headless` if `isaaclab_visualizers` is i
 |---|---|---|
 | `h1` | `elbow`, `shoulder_pitch`, `shoulder_roll`, `shoulder_yaw` | `all_arms` |
 | `ur10e` | `elbow`, `shoulder_pan`, `shoulder_lift`, `wrist_1`, `wrist_2`, `wrist_3` | `all` |
+| `so101` | `Rotation`, `Pitch`, `Elbow`, `Wrist_Pitch`, `Wrist_Roll`, `Jaw` | `all` |
 | `teststand` | `elbow` | — |
 
-For H1, left/right mirroring is on by default (`--no-mirror` to disable). UR10e and teststand have no mirroring.
+For H1, left/right mirroring is on by default (`--no-mirror` to disable). UR10e, SO-101, and teststand have no mirroring.
 
 ### CLI Arguments
 

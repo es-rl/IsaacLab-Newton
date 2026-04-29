@@ -4,7 +4,7 @@ Runs PACE-style optimization: N parallel sim environments, each with different
 candidate motor parameters, replaying real robot data and minimizing position
 MSE vs real measured response.
 
-Supported robots: h1 (default), ur10e
+Supported robots: h1 (default), ur10e, so101
 
 Input modes:
   - Motor CSVs:   raw *_motor.csv directory (auto-converted to SAGE format)
@@ -52,7 +52,7 @@ parser.add_argument(
     "--robot-name",
     type=str,
     default="h1",
-    choices=["h1", "h1_right_arm", "ur10e"],
+    choices=["h1", "h1_right_arm", "ur10e", "so101"],
     help="Robot name (default: h1).",
 )
 
@@ -165,6 +165,7 @@ _DEFAULT_CONFIGS = {
     "h1": os.path.join(_RUN_CONFIGS_DIR, "h1", "h1_arms_sysid_bounds.yaml"),
     "h1_right_arm": os.path.join(_RUN_CONFIGS_DIR, "h1", "h1_right_arm_sysid_bounds.yaml"),
     "ur10e": os.path.join(_RUN_CONFIGS_DIR, "ur10e", "ur10e_sysid_bounds.yaml"),
+    "so101": os.path.join(_RUN_CONFIGS_DIR, "so101", "so101_sysid_bounds.yaml"),
 }
 if args.config is None:
     # CLI > run config bounds_yaml > default
@@ -290,6 +291,10 @@ _UR10_USD_PATH = os.path.abspath(os.path.join(
     os.path.dirname(__file__), "..", "..", "input", "robot_models", "ur10", "ur10", "ur10.usd"
 ))
 
+_SO101_USD_PATH = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "..", "input", "robot_models", "so101", "so101.usd")
+)
+
 
 @configclass
 class Ur10eSysidSceneCfg(InteractiveSceneCfg):
@@ -329,6 +334,49 @@ class Ur10eSysidSceneCfg(InteractiveSceneCfg):
     )
 
 
+@configclass
+class So101SysidSceneCfg(InteractiveSceneCfg):
+    """Scene with SO-101 (Feetech STS3215, 6-DoF arm) for system identification.
+
+    SO-101 is fixed-base in its USD form (no free root joint), so plain
+    UsdFileCfg is sufficient — no spawn_from_usd_with_fixed_base helper required.
+    """
+
+    ground = AssetBaseCfg(
+        prim_path="/World/ground",
+        spawn=sim_utils.GroundPlaneCfg(size=(100.0, 100.0)),
+    )
+
+    robot: ArticulationCfg = ArticulationCfg(
+        prim_path="{ENV_REGEX_NS}/Robot",
+        spawn=sim_utils.UsdFileCfg(
+            usd_path=_SO101_USD_PATH,
+        ),
+        init_state=ArticulationCfg.InitialStateCfg(
+            pos=(0.0, 0.0, 0.0),
+            joint_pos={
+                "Rotation": 0.0,
+                "Pitch": 0.0,
+                "Elbow": 0.0,
+                "Wrist_Pitch": 0.0,
+                "Wrist_Roll": 0.0,
+                "Jaw": 0.0,
+            },
+        ),
+        actuators={
+            "all": load_implicit_actuator_cfg(
+                "so101/so101_implicit.yaml",
+                [".*"],
+            ),
+        },
+    )
+
+    dome_light = AssetBaseCfg(
+        prim_path="/World/DomeLight",
+        spawn=sim_utils.DomeLightCfg(color=(0.9, 0.9, 0.9), intensity=500.0),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Robot-specific joint name lists
 # ---------------------------------------------------------------------------
@@ -347,6 +395,17 @@ UR10E_JOINT_NAMES = [
     "wrist_1_joint", "wrist_2_joint", "wrist_3_joint",
 ]
 
+# SO-101 uses USD prim names directly (no _joint suffix).
+# These match both the USD articulation and SAGE's joint_list.txt.
+SO101_JOINT_NAMES = [
+    "Rotation",
+    "Pitch",
+    "Elbow",
+    "Wrist_Pitch",
+    "Wrist_Roll",
+    "Jaw",
+]
+
 _ROBOT_CONFIGS = {
     "h1": {
         "scene_cfg_cls": SysidSceneCfg,
@@ -362,6 +421,11 @@ _ROBOT_CONFIGS = {
         "scene_cfg_cls": Ur10eSysidSceneCfg,
         "joint_names": UR10E_JOINT_NAMES,
         "actuator_yaml": "ur10e/ur10e_implicit.yaml",
+    },
+    "so101": {
+        "scene_cfg_cls": So101SysidSceneCfg,
+        "joint_names": SO101_JOINT_NAMES,
+        "actuator_yaml": "so101/so101_implicit.yaml",
     },
 }
 
