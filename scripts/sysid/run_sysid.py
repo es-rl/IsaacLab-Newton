@@ -119,7 +119,7 @@ from run_configs import load_run_cfg
 
 # Pre-sim imports (data loading does not need SimulationApp).
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from data_loading import load_real_data  # noqa: E402, F401
+from data_loading import load_real_data  # noqa: E402
 
 _run_cfg = load_run_cfg(args.robot_name)
 _sim_cfg = _run_cfg.get("simulation", {})
