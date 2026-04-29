@@ -1,0 +1,49 @@
+# Copyright (c) 2022-2026, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
+# SO-101 system identification parameter bounds.
+# 6 joint types (no left/right mirroring): Rotation, Pitch, Elbow,
+# Wrist_Pitch, Wrist_Roll, Jaw. CMA-ES optimizes these in normalized
+# [-1, 1] space with linear mapping to bounds.
+# Source of initial ranges: STS3215 servo datasheet - wide bounds for
+# customer's first-pass sysid; narrow after observing results.
+
+mirror: false
+
+joint_types:
+  - Rotation
+  - Pitch
+  - Elbow
+  - Wrist_Pitch
+  - Wrist_Roll
+  - Jaw
+
+parameters:
+  armature:
+    lower: 0.0
+    upper: 0.05
+  dynamic_friction:
+    lower: 0.0
+    upper: 1.0
+  viscous_friction:
+    lower: 0.0
+    upper: 1.0
+  # Uncomment to also optimize PD gains per joint:
+  # stiffness:
+  #   lower: 1.0
+  #   upper: 20.0
+  # damping:
+  #   lower: 0.01
+  #   upper: 1.0
+
+# Fixed parameters (not optimized, written to best_params.yaml for reference)
+fixed:
+  motor_lag_ms: 0.0           # measure on customer hardware
+
+# CMA-ES defaults (can be overridden via CLI)
+cmaes:
+  sigma: 0.5
+  max_iterations: 200
+  epsilon: 0.01

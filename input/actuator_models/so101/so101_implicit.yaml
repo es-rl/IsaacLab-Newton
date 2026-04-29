@@ -1,0 +1,33 @@
+# Copyright (c) 2022-2026, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
+# SO-101 motor parameters - TEMPLATE for customer sysid.
+# All values are manufacturer defaults from the Feetech STS3215 datasheet
+# (https://www.feetechrc.com/store/p/sts3215.html). Customer's CMA-ES
+# sysid fills in armature, dynamic_friction, viscous_friction.
+#
+# Robot: 6-DOF arm + gripper; joints named per USD prim:
+#   Rotation, Pitch, Elbow, Wrist_Pitch, Wrist_Roll, Jaw
+
+# Effort/velocity limits - STS3215 datasheet
+effort_limit_sim: 1.5          # N-m, datasheet stall torque (12V)
+velocity_limit_sim: 6.28       # rad/s, ~60 RPM no-load speed
+
+# PD gains - STS3215 internal servo defaults; customer may tune
+stiffness: 4.0                 # kp
+damping: 0.1                   # kd
+
+# Command transport delay - measure on customer hardware
+motor_lag_ms: 0.0              # ms
+
+# Customer's CMA-ES sysid fills in below - initial values are zero/placeholder.
+armature:
+  ".*": 0.0                    # rotor inertia placeholder; sysid bounds [0.0, 0.05]
+
+dynamic_friction:
+  ".*": 0.0                    # Coulomb friction baseline; sysid bounds [0.0, 1.0]
+
+viscous_friction:
+  ".*": 0.0                    # passive damping baseline; sysid bounds [0.0, 1.0]

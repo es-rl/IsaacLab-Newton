@@ -1,0 +1,56 @@
+# Copyright (c) 2022-2026, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
+# SO-101 runtime configuration.
+# CLI arguments override values set here.
+
+simulation:
+  physics_freq: 500           # Hz
+  control_freq: 500           # Hz
+  render_freq: 500            # Hz
+  integrator: implicitfast    # Newton solver integrator
+  solver_iterations: 10       # Newton solver iterations
+  ls_iterations: 10           # Newton line-search iterations
+
+#-------------------------------------------------------------------------------------
+benchmark:
+  fix_root: true
+  buffer_time: 2.0            # seconds - settle before motion playback
+  motor_lag_ms: null          # null = read from actuator YAML
+  kp: null                    # null = use actuator YAML defaults
+  kd: null
+
+  # Motion data - placeholder; customer fills in path to their motion files.
+  motion_files: input/motion_files/so101/<motion_dir>
+  original_control_freq: null                                # Hz - auto-detected from CSV timestamps if null
+  motion_name: customer_motion                               # motion name for output directory
+
+  # Output paths
+  output_folder: output/sim2real_benchmark
+
+#-------------------------------------------------------------------------------------
+analysis:
+  output_dir: output/sim2real_analysis
+  sample_dt: 0.005            # seconds - comparison timestep
+  motion_names: "*"
+
+#-------------------------------------------------------------------------------------
+# Actuator model for benchmark joints. SO-101 ships with implicit ImplicitActuator
+# template; customer's CMA-ES sysid produces fitted variants.
+actuator:
+  model_type: implicit
+  yaml_file: so101/so101_implicit.yaml
+
+#-------------------------------------------------------------------------------------
+sysid:
+  output_dir: full
+  bounds_yaml: so101/so101_sysid_bounds.yaml                 # path relative to input/run_configs/
+  real_data_dir: input/sysid_data/so101/<motion_dir>         # placeholder - customer fills in
+  joints: full                                               # "full" = all joint types, or list of names
+  num_envs: 64
+  max_iter: 100
+  sigma: 0.5
+  epsilon: 0.001
+  buffer_time: 2.0
