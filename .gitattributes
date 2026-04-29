@@ -10,6 +10,7 @@
 *.pt filter=lfs diff=lfs merge=lfs -text
 *.jit filter=lfs diff=lfs merge=lfs -text
 *.hdf5 filter=lfs diff=lfs merge=lfs -text
+*.stl filter=lfs diff=lfs merge=lfs -text
 
 *.bat text eol=crlf
 *.sh text eol=lf
