@@ -36,8 +36,6 @@ Usage (UR10e all-joints CSV):
 """
 
 import argparse
-import ast
-import csv
 import glob
 import os
 import sys
@@ -118,6 +116,10 @@ args.enable_cameras = False
 # Load per-robot run config; CLI args override config values
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "input"))
 from run_configs import load_run_cfg
+
+# Pre-sim imports (data loading does not need SimulationApp).
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from data_loading import load_real_data  # noqa: E402, F401
 
 _run_cfg = load_run_cfg(args.robot_name)
 _sim_cfg = _run_cfg.get("simulation", {})
@@ -409,84 +411,6 @@ def load_chirp_parquets(file_paths: list[str], target_dt: float) -> tuple[np.nda
     measured = np.concatenate(all_pos)
     log_message(f"Total: {len(commanded)} steps at {1/target_dt:.0f}Hz = {len(commanded) * target_dt:.1f}s")
     return commanded, measured
-
-
-# ---------------------------------------------------------------------------
-# Data loading: all-joints CSV
-# ---------------------------------------------------------------------------
-
-def load_real_data(data_dir: str, target_dt: float, joint_names: list[str]) -> tuple[np.ndarray, np.ndarray]:
-    """Load all-joints data from CSVs (control.csv + state_motor.csv).
-
-    Args:
-        data_dir: Directory with control.csv, state_motor.csv, joint_list.txt.
-        target_dt: Target timestep for resampling.
-        joint_names: Joint names to extract (determines column order and count).
-
-    Returns:
-        commanded: (T, N) commanded positions for the specified joints.
-        measured:  (T, N) actual positions for the specified joints.
-    """
-    num_joints = len(joint_names)
-
-    joint_list_path = os.path.join(data_dir, "joint_list.txt")
-    with open(joint_list_path) as f:
-        all_joint_names = [line.strip() for line in f if line.strip()]
-
-    joint_indices = []
-    for name in joint_names:
-        joint_indices.append(all_joint_names.index(name))
-
-    # control.csv → commanded positions
-    ctrl_times, ctrl_pos = [], []
-    with open(os.path.join(data_dir, "control.csv")) as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            ctrl_times.append(float(row["timestamp"]))
-            positions = ast.literal_eval(row["positions"])
-            ctrl_pos.append([positions[i] for i in joint_indices])
-
-    # state_motor.csv → actual positions
-    state_times, state_pos = [], []
-    with open(os.path.join(data_dir, "state_motor.csv")) as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            state_times.append(float(row["timestamp"]))
-            positions = ast.literal_eval(row["positions"])
-            state_pos.append([positions[i] for i in joint_indices])
-
-    ctrl_pos = np.array(ctrl_pos)
-    state_pos = np.array(state_pos)
-
-    # Timestamps are in microseconds
-    ctrl_times = np.array(ctrl_times)
-    real_dt = float(np.median(np.diff(ctrl_times))) / 1e6
-
-    # Align lengths
-    min_len = min(len(ctrl_pos), len(state_pos))
-    ctrl_pos = ctrl_pos[:min_len]
-    state_pos = state_pos[:min_len]
-
-    # Resample if needed
-    if abs(real_dt - target_dt) > 1e-6:
-        T = ctrl_pos.shape[0]
-        duration = T * real_dt
-        new_len = int(round(duration / target_dt))
-        old_times = np.linspace(0, duration, T, endpoint=False)
-        new_times = np.linspace(0, duration, new_len, endpoint=False)
-        new_times = new_times[new_times <= old_times[-1]]
-
-        new_ctrl = np.zeros((len(new_times), num_joints))
-        new_state = np.zeros((len(new_times), num_joints))
-        for j in range(num_joints):
-            new_ctrl[:, j] = interp1d(old_times, ctrl_pos[:, j], kind="linear")(new_times)
-            new_state[:, j] = interp1d(old_times, state_pos[:, j], kind="linear")(new_times)
-        ctrl_pos = new_ctrl
-        state_pos = new_state
-        log_message(f"Resampled {T} ({1/real_dt:.0f}Hz) → {len(new_times)} ({1/target_dt:.0f}Hz)")
-
-    log_message(f"Loaded real data: {len(ctrl_pos)} steps, {num_joints} joints")
-    return ctrl_pos, state_pos
 
 
 # ---------------------------------------------------------------------------
