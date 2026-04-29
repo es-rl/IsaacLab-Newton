@@ -29,6 +29,12 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "input"))
 from actuator_models import load_actuator_params, load_dc_motor_cfg, load_fmu_actuator_cfg, load_implicit_actuator_cfg
 from spawn_utils import spawn_from_usd_with_fixed_base
 
+# Sibling import — same dir as this file. ``scripts/`` is not guaranteed to be
+# on ``sys.path`` at runtime, so use a local-relative import path consistent
+# with the existing ``actuator_models`` / ``spawn_utils`` pattern above.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from actuator_compat import get_joint_indices  # noqa: E402
+
 from isaaclab.actuators import ActuatorNetLSTMCfg, ImplicitActuatorCfg
 from isaaclab.assets import ArticulationCfg, AssetBaseCfg
 from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
@@ -1259,7 +1265,7 @@ class NewtonJointMotionBenchmark:
 
         for _name, actuator in self.robot.actuators.items():
             cfg = actuator.cfg
-            joint_ids = actuator.joint_indices
+            joint_ids = get_joint_indices(actuator)
             if isinstance(joint_ids, slice):
                 joint_ids = list(range(*joint_ids.indices(num_dofs)))
 
