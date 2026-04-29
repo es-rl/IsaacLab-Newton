@@ -76,6 +76,11 @@ on:
       - 'docker/**'
       - 'tools/**'
       - 'apps/**'
+      - 'scripts/sysid/**'
+      - 'scripts/sim2real_gap/**'
+      - 'input/run_configs/**'
+      - 'input/actuator_models/**'
+      - 'input/robot_models/**'
       - '.github/workflows/build.yaml'
       - '.github/actions/**'
     branches:
