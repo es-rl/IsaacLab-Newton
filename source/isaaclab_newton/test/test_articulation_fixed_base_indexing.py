@@ -28,35 +28,28 @@ simulation_app = AppLauncher(headless=True).app
 """Rest everything follows."""
 
 import pytest
-import torch
+import warp as wp
 from isaaclab_newton.assets import Articulation
 from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg
 from isaaclab_newton.physics import NewtonManager as SimulationManager  # noqa: F401
 
-import isaaclab.sim as sim_utils
 from isaaclab.assets import ArticulationCfg
 from isaaclab.sim import SimulationCfg, build_simulation_context
-from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
+
+from isaaclab_assets.robots.franka import FRANKA_PANDA_CFG  # isort:skip
 
 
 def _make_fixed_base_cfg() -> ArticulationCfg:
-    """Build a minimal fixed-base articulation config (Franka panda).
+    """Build a fixed-base articulation config using the canonical Franka panda.
 
     Uses Franka because it is a known fixed-base asset already exercised by
     the rest of the test suite (see ``test_initialization_fixed_base`` in
-    ``test/assets/test_articulation.py``).
+    ``test/assets/test_articulation.py``). Reusing the canonical
+    ``FRANKA_PANDA_CFG`` keeps this regression test aligned with the existing
+    fixed-base test patterns and reduces the chance of unrelated reset
+    failures.
     """
-    return ArticulationCfg(
-        prim_path="/World/Robot",
-        spawn=sim_utils.UsdFileCfg(
-            usd_path=f"{ISAAC_NUCLEUS_DIR}/Robots/Franka/franka_instanceable.usd",
-            activate_contact_sensors=False,
-        ),
-        init_state=ArticulationCfg.InitialStateCfg(
-            joint_pos={".*": 0.0},
-        ),
-        actuators={},
-    )
+    return FRANKA_PANDA_CFG.replace(prim_path="/World/Robot")
 
 
 @pytest.mark.parametrize("device", ["cuda:0"])
@@ -89,9 +82,9 @@ def test_fixed_base_root_velocity_binding_is_one_dim(device: str) -> None:
         # environment 6-D linear+angular velocity.
         vel_binding = articulation.data._sim_bind_root_com_vel_w
         assert vel_binding is not None, "_sim_bind_root_com_vel_w must be set after reset"
-        # Shape sanity: (num_envs, 6). This is the post-patch contract; the
-        # pre-patch fixed-base form ``[:, 0, 0]`` would have produced a 1-D
-        # tensor (or crashed with IndexError on 1-D input).
-        vel_torch = vel_binding if isinstance(vel_binding, torch.Tensor) else torch.as_tensor(vel_binding)
+        # Shape sanity: (num_envs, 6). ``wp.to_torch`` unpacks the underlying
+        # ``wp.spatial_vector`` dtype into a ``(N, 6)`` torch view (matches the
+        # repo convention, e.g. ``test/assets/test_articulation.py:537``).
+        vel_torch = wp.to_torch(vel_binding)
         assert vel_torch.ndim == 2, f"expected 2-D (num_envs, 6), got shape {tuple(vel_torch.shape)}"
         assert vel_torch.shape[-1] == 6, f"expected last dim 6, got {tuple(vel_torch.shape)}"
