@@ -195,27 +195,167 @@ Optimized parameters are written to `best_params.yaml`. Copy per-joint values in
 
 ### SO-101
 
-To run sysid on a Lerobot SO-101 arm:
+The [SO-ARM101](https://github.com/TheRobotStudio/SO-ARM100) is a low-cost
+6-DoF arm + gripper (TheRobotStudio / HuggingFace LeRobot follower) using
+Feetech STS3215 servos. The toolbox ships everything required to run CMA-ES
+sysid against your own SO-101 motor recordings:
 
-1. Place real motor data at `input/sysid_data/so101/<motion>/{control.csv, state_motor.csv, joint_list.txt}`.
-   IMPORTANT: `control.csv` and `state_motor.csv` must have the same number of
-   rows, with row index = wall-clock time. If you collect at different
-   rates (e.g. 50 Hz control / 500 Hz state from the hirate collector),
-   align by nearest-timestamp pairing in your data-prep script before
-   feeding into sysid.
+| Asset | Path |
+|---|---|
+| USD (fixed-base, no free root joint) | `input/robot_models/so101/so101.usd` |
+| Upstream MJCF | `input/robot_models/so101/so101_upstream.xml` |
+| Mesh STLs | `input/robot_models/so101/assets/*.stl` |
+| Actuator template (STS3215 datasheet) | `input/actuator_models/so101/so101_implicit.yaml` |
+| Run config | `input/run_configs/so101/so101.yaml` |
+| CMA-ES bounds | `input/run_configs/so101/so101_sysid_bounds.yaml` |
+| SAGE joints config (analysis) | `scripts/sim2real_gap/configs/so101_joints.yaml` |
+| Smoke test (no GPU) | `scripts/sysid/test/test_so101_smoke.py` |
 
-2. Edit `input/run_configs/so101/so101.yaml` — fill in `motion_files` and
-   `real_data_dir` placeholders.
+#### Joint names
 
-3. Run sysid:
-   ```bash
-   python scripts/sysid/run_sysid.py --robot-name so101 --headless
-   ```
+The pipeline uses **USD prim names** end-to-end (in `joint_list.txt`, the
+bounds YAML, and `best_params.yaml`). They differ from the LeRobot driver
+column names you may see in raw recordings:
 
-The starting actuator template at `input/actuator_models/so101/so101_implicit.yaml`
-uses STS3215 datasheet defaults. CMA-ES will fill in armature and friction
-from your real data. Joint names: `Rotation`, `Pitch`, `Elbow`, `Wrist_Pitch`,
-`Wrist_Roll`, `Jaw`.
+| USD prim (sysid + bounds) | LeRobot driver name | Description |
+|---|---|---|
+| `Rotation` | `shoulder_pan` | Base yaw |
+| `Pitch` | `shoulder_lift` | Shoulder pitch |
+| `Elbow` | `elbow_flex` | Elbow |
+| `Wrist_Pitch` | `wrist_flex` | Wrist pitch |
+| `Wrist_Roll` | `wrist_roll` | Wrist roll |
+| `Jaw` | `gripper` | Gripper |
+
+Your `joint_list.txt` must list the six USD prim names, one per line, in
+the column order used by `control.csv` and `state_motor.csv`.
+
+#### 1. Collect motor data
+
+Record SAGE-format motion data on your SO-101 and place it under
+`input/sysid_data/so101/<motion>/`:
+
+```
+input/sysid_data/so101/<motion>/
+├── control.csv          # commanded positions, type/timestamp/positions columns
+├── state_motor.csv      # measured positions/velocities/torques
+└── joint_list.txt       # six USD joint names, one per line
+```
+
+`control.csv` and `state_motor.csv` must have the same number of rows; row
+index is wall-clock time. If you collect commands and state at different
+rates (e.g. 50 Hz control / 500 Hz state from a hirate collector), resample
+by nearest-timestamp pairing in your data-prep script *before* feeding into
+sysid — the toolbox does not align asynchronously-collected streams.
+
+Torques in `state_motor.csv` must be in **Nm**. If your driver reports
+servo current (mA), multiply by your measured Kt (Nm/A) before writing the
+CSV; otherwise CMA-ES will report MSE on units that don't correspond to
+torque.
+
+#### 2. Configure paths
+
+Edit `input/run_configs/so101/so101.yaml` and replace the `<motion_dir>`
+placeholders with the directory you just created:
+
+```yaml
+sysid:
+  bounds_yaml: so101/so101_sysid_bounds.yaml
+  real_data_dir: input/sysid_data/so101/my_recording   # was <motion_dir>
+  joints: full              # all 6 joint types from the bounds YAML
+  num_envs: 64
+  max_iter: 100
+```
+
+#### 3. Run sysid
+
+```bash
+python scripts/sysid/run_sysid.py --robot-name so101 --headless
+```
+
+Output goes to `output/sysid/so101/full/`:
+
+| File | Contents |
+|---|---|
+| `best_params.yaml` | Optimal `armature`, `dynamic_friction`, `viscous_friction` per joint |
+| `optimization_log.csv` | Per-generation best/mean MSE and parameter values |
+| `run_summary.yaml` | Sim settings + bounds + actuator model snapshot |
+
+Override the data path or joint scope without editing the YAML:
+
+```bash
+python scripts/sysid/run_sysid.py \
+    --robot-name so101 \
+    --real-data-dir input/sysid_data/so101/elbow_chirp \
+    --joints Elbow,Pitch \
+    --output-dir output/sysid/so101/elbow_pitch \
+    --headless
+```
+
+#### 4. Update the actuator YAML
+
+Copy the per-joint values from `best_params.yaml` into
+`input/actuator_models/so101/so101_implicit.yaml`. Each parameter accepts a
+regex-keyed dict — the `.*` template entries become explicit per-joint values:
+
+```yaml
+armature:
+  Rotation: 0.012
+  Pitch: 0.018
+  Elbow: 0.021
+  Wrist_Pitch: 0.009
+  Wrist_Roll: 0.007
+  Jaw: 0.004
+
+dynamic_friction:
+  Rotation: 0.34
+  # ... etc.
+```
+
+`stiffness`, `damping`, `effort_limit_sim`, and `velocity_limit_sim` come
+from the STS3215 datasheet (1.5 N·m stall at 12 V, ~6.28 rad/s no-load).
+Leave these alone unless you have measured otherwise on your own arm.
+
+#### 5. Tuning the bounds
+
+`input/run_configs/so101/so101_sysid_bounds.yaml` ships with conservative
+ranges suitable for a first-pass fit:
+
+```yaml
+parameters:
+  armature:          { lower: 0.0, upper: 0.05 }
+  dynamic_friction:  { lower: 0.0, upper: 1.0 }
+  viscous_friction:  { lower: 0.0, upper: 1.0 }
+  # Uncomment to also optimize PD gains per joint:
+  # stiffness:       { lower: 1.0, upper: 20.0 }
+  # damping:         { lower: 0.01, upper: 1.0 }
+```
+
+After observing your first run's `best_params.yaml`, narrow each range to
+~2× the fitted value and re-run with `--max-iter 200` for a tighter fit.
+
+#### 6. Validate
+
+Once you have fitted parameters, run the benchmark + analysis to compare
+sim vs real on a held-out motion. See
+[`scripts/sim2real_gap/README.md`](../sim2real_gap/README.md#quick-start-so-101)
+for the SO-101 benchmark walkthrough.
+
+#### Notes
+
+- The SO-101 USD is fixed-base (the base flange is rigidly attached to the
+  ground frame), so `--robot-name so101` does not need
+  `spawn_from_usd_with_fixed_base`.
+- `So101SysidSceneCfg.init_state` starts the sim at all-zero joint angles.
+  The `buffer_time` (default 2.0 s in the run config) lets the arm settle
+  under gravity and PD before the first real-data frame is replayed. If
+  your recording starts in a heavily gravity-loaded pose with low PD
+  gains, increase `buffer_time` or raise the kp/kd lower bounds in the
+  bounds YAML.
+- `motor_lag_ms` is fixed at 0 in the bounds YAML and copied into the
+  actuator YAML's top-level `motor_lag_ms` field. If you can measure
+  command-to-response delay on your hardware, edit it directly there;
+  the bounds-YAML hook is for advanced users who want to optimize it as
+  a free parameter.
 
 ## Runtime Configuration
 
@@ -556,10 +696,9 @@ Add `--visualizer newton` instead of `--headless` if `isaaclab_visualizers` is i
 |---|---|---|
 | `h1` | `elbow`, `shoulder_pitch`, `shoulder_roll`, `shoulder_yaw` | `all_arms` |
 | `ur10e` | `elbow`, `shoulder_pan`, `shoulder_lift`, `wrist_1`, `wrist_2`, `wrist_3` | `all` |
-| `so101` | `Rotation`, `Pitch`, `Elbow`, `Wrist_Pitch`, `Wrist_Roll`, `Jaw` | `all` |
 | `teststand` | `elbow` | — |
 
-For H1, left/right mirroring is on by default (`--no-mirror` to disable). UR10e, SO-101, and teststand have no mirroring.
+For H1, left/right mirroring is on by default (`--no-mirror` to disable). UR10e and teststand have no mirroring. SO-101 is not yet supported by the synthetic chirp generator — record excitations directly on hardware via the LeRobot SO-101 driver.
 
 ### CLI Arguments
 

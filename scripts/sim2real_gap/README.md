@@ -157,6 +157,98 @@ Analysis produces per-joint comparison plots (with RMSE), boxplots, and a metric
 
 ---
 
+## Quick Start (SO-101)
+
+Validate SO-101 sysid output against held-out real motor data. Assumes you
+have already produced fitted parameters via
+[`scripts/sysid/README.md`](../sysid/README.md#so-101); the benchmark
+replays a real-robot recording in Newton sim and the analysis step
+computes per-joint sim-vs-real metrics.
+
+### 1. Configure data paths
+
+Edit `input/run_configs/so101/so101.yaml` and replace the `<motion_dir>`
+placeholders:
+
+```yaml
+benchmark:
+  motion_files: input/sysid_data/so101/my_holdout_motion   # was <motion_dir>
+  motion_name: my_holdout_motion                           # was customer_motion
+  output_folder: output/sim2real_benchmark
+
+analysis:
+  output_dir: output/sim2real_analysis
+  sample_dt: 0.005
+  motion_names: "*"
+
+actuator:
+  model_type: implicit
+  yaml_file: so101/so101_implicit.yaml         # the YAML you populated from sysid
+```
+
+`motion_files` should be a SAGE-format directory (`control.csv`,
+`state_motor.csv`, `joint_list.txt`) — the same format consumed by sysid.
+
+### 2. Run the benchmark
+
+```bash
+# from config (paths set in YAML)
+python scripts/sim2real_gap/run_benchmark.py --robot-name so101 --headless
+
+# explicit motion dir
+python scripts/sim2real_gap/run_benchmark.py \
+    --robot-name so101 \
+    --motion-files input/sysid_data/so101/my_holdout_motion \
+    --motion-name my_holdout_motion \
+    --output-folder output/sim2real_benchmark \
+    --headless
+```
+
+Drop `--headless` and add `--visualizer newton` to view the playback in
+the Newton viewer (requires `pip install isaaclab_visualizers[newton]`).
+
+The benchmark writes sim joint trajectories to
+`output/sim2real_benchmark/sim/so101/<motion_name>_implicit/` and stages
+the real recording at
+`output/sim2real_benchmark/real/so101/<motion_name>/` (auto-converted to
+SAGE if needed).
+
+### 3. Run analysis
+
+```bash
+# from config (paths set in YAML)
+python scripts/sim2real_gap/run_analysis.py --robot-name so101
+
+# override paths
+python scripts/sim2real_gap/run_analysis.py \
+    --robot-name so101 \
+    --result-folder output/sim2real_benchmark \
+    --output-dir output/sim2real_analysis \
+    --sample-dt 0.005
+```
+
+Output goes to `output/sim2real_analysis/metrics/so101/<motion_name>/`:
+per-joint position/velocity/torque comparison plots, a
+`metrics_summary.xlsx` with RMSE / cosine similarity / correlation per
+joint, and a boxplot summary. Compare against the same metrics produced
+from the unfit STS3215 template to quantify the sim-to-real improvement
+delivered by your CMA-ES fit.
+
+### Notes
+
+- `scripts/sim2real_gap/configs/so101_joints.yaml` and
+  `so101_valid_joints.txt` enumerate the six USD joint names
+  (`Rotation, Pitch, Elbow, Wrist_Pitch, Wrist_Roll, Jaw`) for SAGE's
+  strict joint-name matching. They ship with the toolbox; you do not
+  need to edit them.
+- The SO-101 USD is fixed-base, so `--fix-root` is the default and there
+  is no torso/pelvis joint to suppress.
+- Motor torque in `state_motor.csv` must be in N·m; if your driver
+  reports current (mA) you must convert before benchmarking, otherwise
+  the torque-RMSE column is meaningless.
+
+---
+
 ## Sim-in-the-loop vs. Open-loop (Real Data) Evaluation
 
 `sim_vs_nosim_benchmark.py` compares open-loop performance of model by feeding real data directly through an actuator model without running Newton physics. This isolates the actuator model's accuracy from physics simulation effects (contact, integrator drift, etc.).
@@ -233,6 +325,7 @@ Accepts both parquet files (benchtop motor data) and motor CSVs. When both forma
 |---|---|---|---|---|
 | `h1` | `H1BenchmarkSceneCfg` | `input/robot_models/h1_minimal/h1_minimal.usda` | `h1/h1_arm_implicit.yaml` | `configs/h1_valid_joints.txt` (19 joints) |
 | `ur10e` | `Ur10eBenchmarkSceneCfg` | `input/robot_models/ur10/ur10/ur10.usd` | `ur10e/ur10e_implicit.yaml` | `configs/ur10e_valid_joints.txt` (6 joints) |
+| `so101` | `So101BenchmarkSceneCfg` | `input/robot_models/so101/so101.usd` | `so101/so101_implicit.yaml` | `configs/so101_valid_joints.txt` (6 joints) |
 | `teststand` | `TestStandBenchmarkSceneCfg` | `input/robot_models/teststand/teststand.usda` | `teststand/teststand_implicit.yaml` | `configs/teststand_valid_joints.txt` (1 joint) |
 
 Robot selection is via `--robot-name`. Each robot has its own scene config class in `newton_benchmark.py`, selected at runtime via the `_BENCHMARK_ROBOT_CONFIGS` dict (same pattern as `_ROBOT_CONFIGS` in `run_sysid.py`). See [Adding a New Robot](#adding-a-new-robot) for how to add support for a new robot.
