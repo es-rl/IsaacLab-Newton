@@ -14,6 +14,7 @@ require a SimulationApp or GPU.
 from __future__ import annotations
 
 import os
+import re
 
 import yaml
 
@@ -33,16 +34,57 @@ SO101_JOINT_NAMES = [
 ]
 
 
+_BENCH_PATH = os.path.join(_REPO, "scripts", "sim2real_gap", "newton_benchmark.py")
+
+# Match the so101 entry inside _BENCHMARK_ROBOT_CONFIGS: the dict key,
+# its scene_cfg_cls value, and the actuator_yaml string.
+_DISPATCH_ENTRY_RE = re.compile(
+    r'"so101":\s*\{\s*'
+    r'"scene_cfg_cls":\s*So101BenchmarkSceneCfg,\s*'
+    r'"actuator_yaml":\s*"(?P<yaml>[^"]+)",\s*'
+    r"\}",
+    re.DOTALL,
+)
+
+# Match the actuator yaml argument inside So101BenchmarkSceneCfg's
+# load_implicit_actuator_cfg(...) call.
+_SCENE_ACTUATOR_RE = re.compile(
+    r"class So101BenchmarkSceneCfg.*?"
+    r'load_implicit_actuator_cfg\(\s*"(?P<yaml>[^"]+)"',
+    re.DOTALL,
+)
+
+
 def test_so101_registered_in_benchmark_dispatch() -> None:
     """``so101`` is registered in ``_BENCHMARK_ROBOT_CONFIGS`` and points at
-    ``So101BenchmarkSceneCfg``."""
-    bench_path = os.path.join(_REPO, "scripts", "sim2real_gap", "newton_benchmark.py")
-    with open(bench_path) as f:
+    ``So101BenchmarkSceneCfg`` with a well-formed actuator_yaml entry."""
+    with open(_BENCH_PATH) as f:
         source = f.read()
 
     assert "class So101BenchmarkSceneCfg" in source, "newton_benchmark.py is missing So101BenchmarkSceneCfg"
-    assert '"so101":' in source, "newton_benchmark.py is missing the 'so101' dispatch key"
-    assert "So101BenchmarkSceneCfg," in source, "_BENCHMARK_ROBOT_CONFIGS does not reference So101BenchmarkSceneCfg"
+    match = _DISPATCH_ENTRY_RE.search(source)
+    assert match, "_BENCHMARK_ROBOT_CONFIGS does not contain a well-formed 'so101' entry"
+
+
+def test_so101_dispatch_actuator_yaml_matches_scene_cfg() -> None:
+    """The actuator YAML referenced inside ``So101BenchmarkSceneCfg`` and the
+    one registered in ``_BENCHMARK_ROBOT_CONFIGS["so101"]["actuator_yaml"]``
+    must agree.
+
+    Catches drift if either site is renamed without updating the other.
+    """
+    with open(_BENCH_PATH) as f:
+        source = f.read()
+
+    dispatch_match = _DISPATCH_ENTRY_RE.search(source)
+    scene_match = _SCENE_ACTUATOR_RE.search(source)
+    assert dispatch_match, "could not find so101 dispatch entry"
+    assert scene_match, "could not find load_implicit_actuator_cfg call inside So101BenchmarkSceneCfg"
+
+    assert dispatch_match.group("yaml") == scene_match.group("yaml"), (
+        f"actuator_yaml drift: dispatch entry says '{dispatch_match.group('yaml')}' "
+        f"but So101BenchmarkSceneCfg loads '{scene_match.group('yaml')}'"
+    )
 
 
 def test_so101_benchmark_usd_exists() -> None:
