@@ -307,7 +307,7 @@ armature:
   Jaw: 0.004
 
 dynamic_friction:
-  Rotation: 0.34
+  Rotation: 0.34         # illustrative — paste your fitted values
   # ... etc.
 ```
 
@@ -322,16 +322,28 @@ ranges suitable for a first-pass fit:
 
 ```yaml
 parameters:
-  armature:          { lower: 0.0, upper: 0.05 }
-  dynamic_friction:  { lower: 0.0, upper: 1.0 }
-  viscous_friction:  { lower: 0.0, upper: 1.0 }
+  armature:
+    lower: 0.0
+    upper: 0.05
+  dynamic_friction:
+    lower: 0.0
+    upper: 1.0
+  viscous_friction:
+    lower: 0.0
+    upper: 1.0
   # Uncomment to also optimize PD gains per joint:
-  # stiffness:       { lower: 1.0, upper: 20.0 }
-  # damping:         { lower: 0.01, upper: 1.0 }
+  # stiffness:
+  #   lower: 1.0
+  #   upper: 20.0
+  # damping:
+  #   lower: 0.01
+  #   upper: 1.0
 ```
 
 After observing your first run's `best_params.yaml`, narrow each range to
 ~2× the fitted value and re-run with `--max-iter 200` for a tighter fit.
+The run config's `sysid.max_iter` overrides the bounds YAML's
+`cmaes.max_iterations`; CLI `--max-iter` overrides both.
 
 #### 6. Validate
 

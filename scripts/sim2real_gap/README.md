@@ -159,6 +159,14 @@ Analysis produces per-joint comparison plots (with RMSE), boxplots, and a metric
 
 ## Quick Start (SO-101)
 
+> **Note:** SO-101 benchmark dispatch (the `So101BenchmarkSceneCfg` scene
+> and its `_BENCHMARK_ROBOT_CONFIGS["so101"]` entry) is added by a
+> companion change to `newton_benchmark.py`. If `--robot-name so101`
+> raises `ValueError: Unknown robot 'so101'`, that change has not yet
+> landed on your branch — pull `develop` and try again. SO-101 sysid
+> (`scripts/sysid/README.md#so-101`) is unaffected and works
+> independently.
+
 Validate SO-101 sysid output against held-out real motor data. Assumes you
 have already produced fitted parameters via
 [`scripts/sysid/README.md`](../sysid/README.md#so-101); the benchmark
@@ -172,6 +180,9 @@ placeholders:
 
 ```yaml
 benchmark:
+  # Path can be anywhere on disk — the shipped placeholder lives under
+  # input/motion_files/so101/<motion_dir>; this example uses sysid_data/
+  # to reuse the same recordings produced for sysid.
   motion_files: input/sysid_data/so101/my_holdout_motion   # was <motion_dir>
   motion_name: my_holdout_motion                           # was customer_motion
   output_folder: output/sim2real_benchmark
