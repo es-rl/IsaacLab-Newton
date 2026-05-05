@@ -906,6 +906,7 @@ class So101BenchmarkSceneCfg(InteractiveSceneCfg):
                 "Wrist_Roll": 0.0,
                 "Jaw": 0.0,
             },
+            joint_vel={".*": 0.0},
         ),
         actuators={
             "all": load_implicit_actuator_cfg(
