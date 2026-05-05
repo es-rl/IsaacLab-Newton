@@ -50,6 +50,7 @@ _H1_LOCAL_USD = os.path.abspath(
 _UR10_LOCAL_USD = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "../../input/robot_models/ur10/ur10/ur10.usd")
 )
+_SO101_LOCAL_USD = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../input/robot_models/so101/so101.usd"))
 _TESTSTAND_LOCAL_USD = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "../../input/robot_models/teststand/teststand.usda")
 )
@@ -881,6 +882,46 @@ class Ur10eBenchmarkSceneCfg(InteractiveSceneCfg):
 
 
 @configclass
+class So101BenchmarkSceneCfg(InteractiveSceneCfg):
+    """Scene with SO-101 (Feetech STS3215, 6-DoF arm + gripper) for motion benchmarking.
+
+    SO-101 is fixed-base in its USD form (no free root joint), so plain
+    UsdFileCfg is sufficient — no spawn_from_usd_with_fixed_base helper required.
+    """
+
+    ground = AssetBaseCfg(
+        prim_path="/World/ground",
+        spawn=sim_utils.GroundPlaneCfg(size=(100.0, 100.0)),
+    )
+
+    robot: ArticulationCfg = ArticulationCfg(
+        prim_path="{ENV_REGEX_NS}/Robot",
+        spawn=sim_utils.UsdFileCfg(usd_path=_SO101_LOCAL_USD),
+        init_state=ArticulationCfg.InitialStateCfg(
+            joint_pos={
+                "Rotation": 0.0,
+                "Pitch": 0.0,
+                "Elbow": 0.0,
+                "Wrist_Pitch": 0.0,
+                "Wrist_Roll": 0.0,
+                "Jaw": 0.0,
+            },
+        ),
+        actuators={
+            "all": load_implicit_actuator_cfg(
+                "so101/so101_implicit.yaml",
+                [".*"],
+            ),
+        },
+    )
+
+    dome_light = AssetBaseCfg(
+        prim_path="/World/DomeLight",
+        spawn=sim_utils.DomeLightCfg(color=(0.9, 0.9, 0.9), intensity=500.0),
+    )
+
+
+@configclass
 class TestStandBenchmarkSceneCfg(InteractiveSceneCfg):
     """Scene with single motor teststand (base cylinder + arm bar + revolute elbow).
 
@@ -929,6 +970,10 @@ _BENCHMARK_ROBOT_CONFIGS = {
     "ur10e": {
         "scene_cfg_cls": Ur10eBenchmarkSceneCfg,
         "actuator_yaml": "ur10e/ur10e_implicit.yaml",
+    },
+    "so101": {
+        "scene_cfg_cls": So101BenchmarkSceneCfg,
+        "actuator_yaml": "so101/so101_implicit.yaml",
     },
     "teststand": {
         "scene_cfg_cls": TestStandBenchmarkSceneCfg,
