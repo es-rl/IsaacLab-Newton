@@ -905,6 +905,55 @@ for _alias in _G1_ALIASES:
     _ROBOT_ARM_CFG[_alias] = _G1_ARM_CFG
 
 
+_G1_LEG_CFG = {
+    "joint_exprs": [
+        ".*_hip_pitch_joint",
+        ".*_hip_roll_joint",
+        ".*_hip_yaw_joint",
+        ".*_knee_joint",
+        ".*_ankle_pitch_joint",
+        ".*_ankle_roll_joint",
+    ],
+    "group_name": "legs",
+    "model_subdir": "g1",
+}
+_G1_LEG_ALIASES = (
+    "g1_right_leg",
+    "g1_right_leg_default_pd",
+    "g1_right_leg_v2_fixedpd_lag10_sysid",
+)
+_ROBOT_LEG_CFG = {}
+for _alias in _G1_LEG_ALIASES:
+    _ROBOT_LEG_CFG[_alias] = _G1_LEG_CFG
+
+
+def _build_leg_actuators(run_cfg: dict, robot_name: str) -> dict | None:
+    """Build G1 leg actuator configs from the run config's actuator section."""
+    act_cfg = run_cfg.get("actuator")
+    if not act_cfg:
+        return None
+
+    leg = _ROBOT_LEG_CFG.get(robot_name)
+    if leg is None:
+        return None
+
+    model_type = act_cfg.get("model_type", "implicit")
+    yaml_file = act_cfg.get("yaml_file")
+    if model_type != "implicit":
+        raise NotImplementedError(
+            f"Leg benchmark only supports model_type='implicit' in this lean repro, got '{model_type}'."
+        )
+    if not yaml_file:
+        raise ValueError("actuator.yaml_file required for G1 leg benchmark")
+
+    return {
+        leg["group_name"]: load_implicit_actuator_cfg(
+            yaml_file,
+            leg["joint_exprs"],
+        )
+    }
+
+
 def _build_arm_actuators(run_cfg: dict, robot_name: str) -> dict:
     """Build arm actuator config(s) from the run config's ``actuator`` section.
 
@@ -927,7 +976,8 @@ def _build_arm_actuators(run_cfg: dict, robot_name: str) -> dict:
 
     arm = _ROBOT_ARM_CFG.get(robot_name)
     if arm is None:
-        log_message(f"WARNING: no arm config for robot '{robot_name}', skipping actuator override")
+        if robot_name not in _ROBOT_LEG_CFG:
+            log_message(f"WARNING: no arm config for robot '{robot_name}', skipping actuator override")
         return None
 
     joint_exprs = arm["joint_exprs"]
@@ -1358,6 +1408,21 @@ _BENCHMARK_ROBOT_CONFIGS = {
 for _alias in _G1_ALIASES:
     _BENCHMARK_ROBOT_CONFIGS[_alias] = _G1_BENCHMARK_CFG
 
+_G1_LEG_BENCHMARK_CFG = {
+    "scene_cfg_cls": G1BenchmarkSceneCfg,
+    "actuator_yaml": "g1/g1_leg_implicit.yaml",
+    "joint_name_map": {
+        "right_hip_pitch": "right_hip_pitch_joint",
+        "right_hip_roll": "right_hip_roll_joint",
+        "right_hip_yaw": "right_hip_yaw_joint",
+        "right_knee": "right_knee_joint",
+        "right_ankle_pitch": "right_ankle_pitch_joint",
+        "right_ankle_roll": "right_ankle_roll_joint",
+    },
+}
+for _alias in _G1_LEG_ALIASES:
+    _BENCHMARK_ROBOT_CONFIGS[_alias] = _G1_LEG_BENCHMARK_CFG
+
 
 class NewtonJointMotionBenchmark:
     """Plays back joint motion trajectories under Newton physics and logs
@@ -1480,6 +1545,25 @@ class NewtonJointMotionBenchmark:
             for k in old_keys:
                 del scene_cfg.robot.actuators[k]
             scene_cfg.robot.actuators.update(new_arm)
+
+        # For G1 leg aliases, replace the stock split hip/knee and ankle
+        # actuator groups with one SysID-controlled six-joint leg group.
+        new_leg = _build_leg_actuators(self._run_cfg, self.robot_name)
+        if new_leg is not None:
+            old_leg_keys = [
+                k
+                for k in scene_cfg.robot.actuators
+                if k in ("legs", "feet", "leg", "legs_right") or k.startswith("legs_")
+            ]
+            for k in old_leg_keys:
+                del scene_cfg.robot.actuators[k]
+            scene_cfg.robot.actuators.update(new_leg)
+            scene_cfg.robot.actuators["torso"] = ImplicitActuatorCfg(
+                joint_names_expr=["torso_joint"],
+                effort_limit_sim=200,
+                stiffness=200.0,
+                damping=5.0,
+            )
 
         # Apply CLI kp/kd overrides if provided (skip LSTM/GRU groups — they don't use kp/kd)
         if self.kp is not None:
@@ -1653,7 +1737,7 @@ class NewtonJointMotionBenchmark:
         yaml_file = act_section.get("yaml_file")
         if yaml_file:
             self._actuator_suffix = os.path.splitext(os.path.basename(yaml_file))[0]
-        log_message(f"Arms actuator model: {self._actuator_suffix} (output folders will use this name)")
+        log_message(f"Actuator model: {self._actuator_suffix} (output folders will use this name)")
 
         self._log_motor_params()
 

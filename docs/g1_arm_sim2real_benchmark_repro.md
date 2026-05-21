@@ -177,8 +177,8 @@ raw motor CSV timestamps before writing SAGE `real/.../state_motor.csv` and
 sim motion file uses row order, but plots and analysis metrics need the fixed
 timestamps.
 
-The same timestamp caveat applies to the G1 leg raw per-motion CSVs. Leg-specific
-docs live on the stacked leg branch.
+The same timestamp caveat applies to the G1 leg raw per-motion CSVs. See
+`docs/g1_leg_benchmark_status.md` for the stacked clean-branch leg repro.
 
 Verification run after the fix:
 

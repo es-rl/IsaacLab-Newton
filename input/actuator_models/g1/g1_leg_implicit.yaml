@@ -1,0 +1,62 @@
+# Copyright (c) 2022-2026, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
+# G1 right leg motor parameters
+#
+# Out-of-the-box IsaacLab actuator config — values copied verbatim from
+# isaaclab_assets/robots/unitree.py (the stock G1_CFG that ships with
+# IsaacLab). This is what a new engineer using G1 in IsaacLab would
+# naturally get without applying any system identification.
+#
+# Note: these gains do NOT match what the real robot runs at. The real
+# G1 is commanded with the Unitree SDK low-level values (kp=60/60/60/100/40/40,
+# kd=1/1/1/2/1/1), as set in `~/Desktop/UnitreeG1/control/g1_controller.py`.
+# Used here only as the "stock IsaacLab" baseline for measuring what
+# SysID + GRU buy over a naive setup.
+
+effort_limit_sim: 88.0           # N-m (hip/knee motors are stronger than arm)
+velocity_limit_sim: 30.0         # rad/s
+
+stiffness:
+  ".*_hip_pitch_joint": 200.0
+  ".*_hip_roll_joint": 150.0
+  ".*_hip_yaw_joint": 150.0
+  ".*_knee_joint": 200.0
+  ".*_ankle_pitch_joint": 40.0
+  ".*_ankle_roll_joint": 40.0
+
+damping:
+  ".*_hip_pitch_joint": 5.0
+  ".*_hip_roll_joint": 5.0
+  ".*_hip_yaw_joint": 5.0
+  ".*_knee_joint": 5.0
+  ".*_ankle_pitch_joint": 1.0
+  ".*_ankle_roll_joint": 1.0
+
+motor_lag_ms: 0.0
+
+armature:
+  ".*_hip_pitch_joint": 0.01
+  ".*_hip_roll_joint": 0.01
+  ".*_hip_yaw_joint": 0.01
+  ".*_knee_joint": 0.01
+  ".*_ankle_pitch_joint": 0.01
+  ".*_ankle_roll_joint": 0.01
+
+dynamic_friction:
+  ".*_hip_pitch_joint": 0.0
+  ".*_hip_roll_joint": 0.0
+  ".*_hip_yaw_joint": 0.0
+  ".*_knee_joint": 0.0
+  ".*_ankle_pitch_joint": 0.0
+  ".*_ankle_roll_joint": 0.0
+
+viscous_friction:
+  ".*_hip_pitch_joint": 0.0
+  ".*_hip_roll_joint": 0.0
+  ".*_hip_yaw_joint": 0.0
+  ".*_knee_joint": 0.0
+  ".*_ankle_pitch_joint": 0.0
+  ".*_ankle_roll_joint": 0.0

@@ -1,0 +1,15 @@
+# Lag10 leg SysID config (all groups).
+
+simulation:
+  physics_freq: 500
+  control_freq: 500
+  render_freq: 500
+  integrator: implicitfast
+  solver_iterations: 10
+  ls_iterations: 10
+actuator:
+  model_type: implicit
+  yaml_file: g1/g1_leg_v2_fixedpd_lag10_sysid.yaml
+benchmark:
+  output_folder: output/g1_leg_benchmark_v2_fixedpd_lag10_sysid
+  real_data_root: input/sysid_data/g1
