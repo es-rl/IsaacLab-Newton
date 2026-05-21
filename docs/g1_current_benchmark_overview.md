@@ -71,6 +71,43 @@ Leg run folder:
 Lower RMSE is better. A positive reduction percentage means the tested model has
 lower error than default PD.
 
+## How overall RMSE is computed
+
+The overall numbers are pooled per-motion RMSE numbers, not concatenated
+rollouts.
+
+For each recorded motion:
+
+1. load real `state_motor.csv`
+2. load sim `state_motor.csv`
+3. normalize timestamps and keep the shared real/sim time window
+4. interpolate sim position, velocity, and torque onto the real timestamps
+5. compute squared error against the real signal for every scored time sample
+   and every scored joint
+
+For one signal, the aggregate is:
+
+```text
+overall_rmse = sqrt(
+  sum_over_motions_time_joints((sim_interp - real)^2)
+  / total_number_of_motion_time_joint_samples
+)
+```
+
+This is equivalent to pooling all squared errors from the 10 independent
+experiments, then taking one root mean square. It is not a plain arithmetic mean
+of the 10 per-motion RMSE values, and it is not one long concatenated rollout.
+
+The improvement percentage is:
+
+```text
+improvement = 100 * (default_pd_rmse - model_rmse) / default_pd_rmse
+```
+
+Command position is used to drive the replay and can be shown in plots, but it
+is not the scored target for RMSE. The scored target is measured real robot
+position, velocity, or torque from `state_motor.csv`.
+
 ## Plot outputs
 
 Fresh plots from the same current clean benchmark outputs:
