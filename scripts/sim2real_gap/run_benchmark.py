@@ -480,14 +480,14 @@ def _is_motor_csv_dir(path):
         return False
     # Check direct children
     for f in os.listdir(path):
-        if f.endswith("_motor.csv"):
+        if f.endswith("_motor.csv") and f != "state_motor.csv":
             return True
     # Check one level of subdirs
     for d in os.listdir(path):
         sub = os.path.join(path, d)
         if os.path.isdir(sub):
             for f in os.listdir(sub):
-                if f.endswith("_motor.csv"):
+                if f.endswith("_motor.csv") and f != "state_motor.csv":
                     return True
     return False
 

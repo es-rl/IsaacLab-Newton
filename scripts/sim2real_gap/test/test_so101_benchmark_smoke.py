@@ -139,3 +139,11 @@ def test_run_benchmark_supports_configured_init_pose_sync() -> None:
     assert "args.real_init_pose" in source
     assert "state_motor.csv" in source
     assert "_stage_sage_real_motion" in source
+
+
+def test_sage_state_motor_csv_is_not_raw_motor_csv() -> None:
+    """SAGE folders contain state_motor.csv and must not enter raw motor conversion."""
+    with open(_RUNNER_PATH) as f:
+        source = f.read()
+
+    assert 'f != "state_motor.csv"' in source
