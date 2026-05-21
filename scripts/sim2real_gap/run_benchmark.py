@@ -499,6 +499,30 @@ def _is_parquet_dir(path):
     return any(f.endswith(".parquet") for f in os.listdir(path))
 
 
+def _is_sage_motion_dir(path):
+    """Check if path is a SAGE motion directory."""
+    return (
+        os.path.isdir(path)
+        and os.path.isfile(os.path.join(path, "control.csv"))
+        and os.path.isfile(os.path.join(path, "state_motor.csv"))
+        and os.path.isfile(os.path.join(path, "joint_list.txt"))
+    )
+
+
+def _find_sage_motion_dirs(path):
+    """Find SAGE motion directories at ``path`` or one level below it."""
+    if not os.path.isdir(path):
+        return []
+    if _is_sage_motion_dir(path):
+        return [path]
+    motion_dirs = []
+    for name in sorted(os.listdir(path)):
+        child = os.path.join(path, name)
+        if _is_sage_motion_dir(child):
+            motion_dirs.append(child)
+    return motion_dirs
+
+
 def _convert_parquets_to_motor_csv(parquet_dir, joint_name="elbow"):
     """Auto-convert parquet files in a directory to motor CSVs (in-place).
 
@@ -659,6 +683,18 @@ def main():
         if motion_file != args.real_control_csv:
             temp_files.add(motion_file)
         _stage_sage_real_motion(args.real_control_csv, motion_name, args)
+
+    elif _find_sage_motion_dirs(args.motion_files):
+        for motion_dir in _find_sage_motion_dirs(args.motion_files):
+            motion_name = os.path.basename(os.path.normpath(motion_dir))
+            motion_file, detected_freq = control_csv_to_motion_file(os.path.join(motion_dir, "control.csv"))
+            if detected_freq is not None and args.original_control_freq is None:
+                args.original_control_freq = detected_freq
+                log_message(f"Auto-set --original-control-freq {detected_freq:.1f} from control.csv timestamps")
+            motions.append((motion_file, motion_name))
+            if motion_file != os.path.join(motion_dir, "control.csv"):
+                temp_files.add(motion_file)
+            _stage_sage_real_motion(os.path.join(motion_dir, "control.csv"), motion_name, args)
 
     elif _is_parquet_dir(args.motion_files) and not _is_motor_csv_dir(args.motion_files):
         _convert_parquets_to_motor_csv(args.motion_files)

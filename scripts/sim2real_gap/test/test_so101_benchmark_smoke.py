@@ -139,6 +139,7 @@ def test_run_benchmark_supports_configured_init_pose_sync() -> None:
     assert "args.real_init_pose" in source
     assert "state_motor.csv" in source
     assert "_stage_sage_real_motion" in source
+    assert "_find_sage_motion_dirs" in source
 
 
 def test_sage_state_motor_csv_is_not_raw_motor_csv() -> None:
