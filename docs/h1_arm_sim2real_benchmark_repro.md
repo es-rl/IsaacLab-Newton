@@ -77,9 +77,19 @@ motor_lag_ms = 20
 armature, dynamic friction, and viscous friction from SysID gen10
 ```
 
-This H1 benchmark is not using a GRU. There is no learned recurrent state to
-warm. The buffer still matters because it settles the fixed-base physics state
-and the command-delay path before replay begins.
+This primary H1 benchmark is not using a GRU. There is no learned recurrent
+state to warm. The buffer still matters because it settles the fixed-base
+physics state and the command-delay path before replay begins.
+
+An experimental residual GRU branch exists separately:
+
+```text
+docs/h1_arm_gru_benchmark_test.md
+```
+
+That branch keeps this same benchmark method and adds a historical PD+GRU
+feed-forward candidate on top of lag20 SysID. It is documented separately so the
+simple SysID result and the learned recurrent result do not get mixed together.
 
 ## Scored Joints
 

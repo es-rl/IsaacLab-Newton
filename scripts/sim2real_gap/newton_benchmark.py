@@ -639,6 +639,17 @@ _G1_ARM_JOINT_NAMES = [
 ]
 _G1_ARM_QPOS_INDICES = [25, 26, 27, 28]
 _G1_ARM_DOF_INDICES = [24, 25, 26, 27]
+_H1_GRU_ARM_JOINT_NAMES = [
+    "right_shoulder_pitch",
+    "right_shoulder_roll",
+    "right_shoulder_yaw",
+    "right_elbow",
+]
+_H1_ARM_MJCF = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "../../input/robot_models/h1_with_gripper/h1_with_gripper.xml")
+)
+_H1_ARM_QPOS_INDICES = [22, 23, 24, 25]
+_H1_ARM_DOF_INDICES = [21, 22, 23, 24]
 
 
 def _load_g1_sysid_mujoco_model():
@@ -672,6 +683,13 @@ def _load_g1_sysid_mujoco_model():
             mjm.body_mass[body_id] += float(override["delta_mass"])
 
     return mjm
+
+
+def _load_h1_arm_mujoco_model():
+    """Load the H1 + gripper MJCF for the GRU qfrc_bias feature."""
+    import mujoco as _mj
+
+    return _mj.MjModel.from_xml_path(_H1_ARM_MJCF)
 
 
 def _patch_g1_fulltorque_enriched(actuator, robot, model_path: str, stats_path: str):
@@ -861,6 +879,227 @@ def _patch_g1_fulltorque_enriched(actuator, robot, model_path: str, stats_path: 
     actuator._enriched_mj_data = mj_data
 
 
+def _patch_h1_fulltorque_enriched(
+    actuator,
+    robot,
+    model_path: str,
+    stats_path: str,
+    include_qfrc_bias: bool = True,
+    include_prev_torque: bool = True,
+    hidden_size: int = 128,
+    num_layers: int = 2,
+    pd_plus_gru: bool = True,
+    output_scale=1.0,
+):
+    """Patch the H1 right arm with the historical 24-feature full-torque GRU.
+
+    H1 GRU experiments use the same feature contract as the old WIP branch:
+    [q, position_error, velocity, PD_hint, qfrc_bias, previous_torque].
+    The useful H1 candidates run in PD+GRU mode, where implicit PD stays active
+    and the GRU output is added as a feed-forward effort.
+    """
+    import types
+
+    import mujoco as _mj
+
+    device = actuator._device
+    joint_names = list(_H1_GRU_ARM_JOINT_NAMES)
+    num_joints = len(joint_names)
+    num_envs = int(actuator._num_envs)
+
+    model = torch.jit.load(model_path, map_location=device).eval()
+    with open(stats_path) as f:
+        stats = json.load(f)
+    mean_t = torch.tensor(stats["mean"], dtype=torch.float32, device=device)
+    std_t = torch.tensor(stats["std"], dtype=torch.float32, device=device)
+
+    if isinstance(output_scale, (list, tuple)):
+        if len(output_scale) != num_joints:
+            raise ValueError(f"H1 GRU output_scale length {len(output_scale)} != {num_joints}")
+        output_scale_t = torch.tensor(output_scale, dtype=torch.float32, device=device)
+    else:
+        output_scale_t = torch.full((num_joints,), float(output_scale), dtype=torch.float32, device=device)
+
+    joint_indices = [robot.joint_names.index(jn) for jn in joint_names]
+    actuator_joint_names = list(actuator._joint_names)
+    actuator_local_indices = [actuator_joint_names.index(jn) for jn in joint_names]
+    actuator_global_indices = [robot.joint_names.index(jn) for jn in actuator_joint_names]
+    actuator_global_indices_t = torch.tensor(actuator_global_indices, dtype=torch.long, device=device)
+
+    hidden = torch.zeros(num_layers, num_envs, hidden_size, dtype=torch.float32, device=device)
+    prev_torque = torch.zeros(num_envs, num_joints, dtype=torch.float32, device=device)
+    mj_model = _load_h1_arm_mujoco_model() if include_qfrc_bias else None
+    mj_data = _mj.MjData(mj_model) if mj_model is not None else None
+
+    log_message(
+        "H1 full-torque GRU: "
+        f"joints={joint_names}, input={mean_t.numel()}, "
+        f"mode={'PD+GRU additive' if pd_plus_gru else 'GRU replaces PD'}, "
+        f"output_scale={output_scale_t.detach().cpu().tolist()}"
+    )
+
+    def reset_state():
+        nonlocal hidden, prev_torque
+        hidden.zero_()
+        prev_torque.zero_()
+
+    def patched_compute_local(self, control_action, joint_pos, joint_vel):
+        nonlocal hidden, prev_torque
+
+        full_pos = robot.data.joint_pos
+        if not isinstance(full_pos, torch.Tensor):
+            full_pos = wp.to_torch(full_pos)
+        full_vel = robot.data.joint_vel
+        if not isinstance(full_vel, torch.Tensor):
+            full_vel = wp.to_torch(full_vel)
+
+        q = full_pos[:, joint_indices].to(torch.float32)
+        v = full_vel[:, joint_indices].to(torch.float32)
+        if control_action.joint_positions is not None:
+            q_target = control_action.joint_positions[:, actuator_local_indices].to(torch.float32)
+        else:
+            q_target = q.clone()
+
+        pos_error = q_target - q
+        pd_hint = 60.0 * pos_error - 1.5 * v
+
+        feat_parts = [q, pos_error, v, pd_hint]
+        if include_qfrc_bias:
+            q_np = q.detach().cpu().numpy()
+            v_np = v.detach().cpu().numpy()
+            qfrc_bias_np = np.zeros((num_envs, num_joints), dtype=np.float32)
+            for env_id in range(num_envs):
+                _mj.mj_resetData(mj_model, mj_data)
+                for k, qi in enumerate(_H1_ARM_QPOS_INDICES):
+                    mj_data.qpos[qi] = float(q_np[env_id, k])
+                for k, vi in enumerate(_H1_ARM_DOF_INDICES):
+                    mj_data.qvel[vi] = float(v_np[env_id, k])
+                _mj.mj_fwdPosition(mj_model, mj_data)
+                _mj.mj_fwdVelocity(mj_model, mj_data)
+                qfrc_bias_np[env_id, :] = [mj_data.qfrc_bias[vi] for vi in _H1_ARM_DOF_INDICES]
+            feat_parts.append(torch.from_numpy(qfrc_bias_np).to(device))
+        if include_prev_torque:
+            feat_parts.append(prev_torque)
+
+        feats = torch.cat(feat_parts, dim=-1)
+        feats_norm = (feats - mean_t) / std_t
+        with torch.inference_mode():
+            torque_out, h_new = model(feats_norm.unsqueeze(1), hidden)
+        hidden[:] = h_new
+        torque = torque_out[:, -1, :].to(torch.float32) * output_scale_t.view(1, num_joints)
+
+        if control_action.joint_efforts is not None:
+            new_efforts = control_action.joint_efforts.clone()
+        else:
+            new_efforts = torch.zeros(num_envs, actuator.num_joints, dtype=torch.float32, device=device)
+        for k, loc_idx in enumerate(actuator_local_indices):
+            new_efforts[:, loc_idx] = torque[:, k]
+        control_action.joint_efforts = new_efforts
+
+        if pd_plus_gru and control_action.joint_positions is not None:
+            pd_estimate = self.stiffness * (control_action.joint_positions - joint_pos) - self.damping * joint_vel
+            self.computed_effort = pd_estimate + control_action.joint_efforts
+        else:
+            self.computed_effort = control_action.joint_efforts
+        self.applied_effort = self._clip_effort(self.computed_effort)
+
+        if include_prev_torque:
+            prev_torque = self.applied_effort[:, actuator_local_indices].detach().clone()
+        return control_action
+
+    def patched_compute_compat(self, control_action=None, joint_pos=None, joint_vel=None):
+        if control_action is not None and joint_pos is not None and joint_vel is not None:
+            if not pd_plus_gru:
+                if isinstance(self.stiffness, torch.Tensor):
+                    self.stiffness = torch.zeros_like(self.stiffness)
+                if isinstance(self.damping, torch.Tensor):
+                    self.damping = torch.zeros_like(self.damping)
+            return patched_compute_local(self, control_action, joint_pos, joint_vel)
+
+        full_pos = robot.data.joint_pos
+        if not isinstance(full_pos, torch.Tensor):
+            full_pos = wp.to_torch(full_pos)
+        full_vel = robot.data.joint_vel
+        if not isinstance(full_vel, torch.Tensor):
+            full_vel = wp.to_torch(full_vel)
+
+        pos_tgt = self.data._actuator_position_target
+        pos_tgt_t = wp.to_torch(pos_tgt) if not isinstance(pos_tgt, torch.Tensor) else pos_tgt
+        local_pos = full_pos.index_select(1, actuator_global_indices_t)
+        local_vel = full_vel.index_select(1, actuator_global_indices_t)
+        local_pos_tgt = pos_tgt_t.index_select(1, actuator_global_indices_t)
+
+        stiff = self.data._sim_bind_joint_stiffness_sim
+        damp = self.data._sim_bind_joint_damping_sim
+        stiff_t = wp.to_torch(stiff) if not isinstance(stiff, torch.Tensor) else stiff
+        damp_t = wp.to_torch(damp) if not isinstance(damp, torch.Tensor) else damp
+        if pd_plus_gru:
+            self.stiffness = stiff_t.index_select(1, actuator_global_indices_t)
+            self.damping = damp_t.index_select(1, actuator_global_indices_t)
+        else:
+            stiff_t[:, actuator_global_indices_t] = 0.0
+            damp_t[:, actuator_global_indices_t] = 0.0
+            self.stiffness = torch.zeros_like(stiff_t.index_select(1, actuator_global_indices_t))
+            self.damping = torch.zeros_like(damp_t.index_select(1, actuator_global_indices_t))
+
+        if not getattr(self, "_clip_effort_shimmed", False):
+            self._clip_effort = lambda x: x
+            self._clip_effort_shimmed = True
+
+        class _ControlAction:
+            pass
+
+        ca = _ControlAction()
+        ca.joint_positions = local_pos_tgt
+        ca.joint_efforts = None
+        ca.joint_velocities = None
+        patched_compute_local(self, ca, local_pos, local_vel)
+
+        if ca.joint_efforts is not None:
+            eff_tgt = self.data._actuator_effort_target
+            eff_tgt_t = wp.to_torch(eff_tgt) if not isinstance(eff_tgt, torch.Tensor) else eff_tgt
+            joint_effort = self.data.joint_effort
+            joint_effort_t = wp.to_torch(joint_effort) if not isinstance(joint_effort, torch.Tensor) else joint_effort
+            applied_eff = getattr(self.data, "_applied_effort", None)
+            applied_eff_t = (
+                wp.to_torch(applied_eff)
+                if applied_eff is not None and not isinstance(applied_eff, torch.Tensor)
+                else applied_eff
+            )
+
+            if eff_tgt_t.shape[1] == ca.joint_efforts.shape[1]:
+                eff_tgt_t.copy_(ca.joint_efforts.to(eff_tgt_t.dtype))
+                if joint_effort_t.shape[1] == ca.joint_efforts.shape[1]:
+                    joint_effort_t.copy_(ca.joint_efforts.to(joint_effort_t.dtype))
+                else:
+                    src = ca.joint_efforts.to(joint_effort_t.dtype)
+                    for act_loc_idx, robot_idx in zip(actuator_local_indices, joint_indices):
+                        joint_effort_t[:, robot_idx] = src[:, act_loc_idx]
+                if applied_eff_t is not None:
+                    applied_src = self.applied_effort.to(applied_eff_t.dtype)
+                    if applied_eff_t.shape[1] == applied_src.shape[1]:
+                        applied_eff_t.copy_(applied_src)
+                    else:
+                        for act_loc_idx, robot_idx in zip(actuator_local_indices, joint_indices):
+                            applied_eff_t[:, robot_idx] = applied_src[:, act_loc_idx]
+            else:
+                src_eff = ca.joint_efforts.to(eff_tgt_t.dtype)
+                src_joint = ca.joint_efforts.to(joint_effort_t.dtype)
+                applied_src = self.applied_effort.to(applied_eff_t.dtype) if applied_eff_t is not None else None
+                for act_loc_idx, robot_idx in zip(actuator_local_indices, joint_indices):
+                    eff_tgt_t[:, robot_idx] = src_eff[:, act_loc_idx]
+                    joint_effort_t[:, robot_idx] = src_joint[:, act_loc_idx]
+                    if applied_eff_t is not None:
+                        applied_eff_t[:, robot_idx] = applied_src[:, act_loc_idx]
+
+    actuator.compute = types.MethodType(patched_compute_compat, actuator)
+    actuator._enriched_model = model
+    actuator._enriched_hidden = hidden
+    actuator._enriched_reset_state = reset_state
+    actuator._enriched_mj_model = mj_model
+    actuator._enriched_mj_data = mj_data
+
+
 # ---------------------------------------------------------------------------
 # Arm actuator group helpers
 # ---------------------------------------------------------------------------
@@ -918,6 +1157,7 @@ for _alias in _G1_ALIASES:
 _H1_ARM_ALIASES = (
     "h1_arm_pd_baseline_yawclamped_gripperpos",
     "h1_arm_lag20_sysid_gripperpos",
+    "h1_arm_v28_lag20_gripperpos_s033",
 )
 for _alias in _H1_ARM_ALIASES:
     _ROBOT_ARM_CFG[_alias] = _ROBOT_ARM_CFG["h1"]
@@ -1079,19 +1319,20 @@ def _build_arm_actuators(run_cfg: dict, robot_name: str) -> dict:
                 log_message(f"  {jt}: ImplicitActuator (PD-only, no GRU model)")
         return actuators
 
-    elif model_type == "full_torque_enriched":
+    elif model_type in ("full_torque_enriched", "h1_arm_full_torque_enriched"):
         if not yaml_file:
-            raise ValueError("actuator.yaml_file required for model_type=full_torque_enriched")
+            raise ValueError(f"actuator.yaml_file required for model_type={model_type}")
         network_file = act_cfg.get("network_file")
         if not network_file:
-            raise ValueError("actuator.network_file required for model_type=full_torque_enriched")
-        log_message(f"  {group_name}: ImplicitActuator(kp=0) + full_torque_enriched ({network_file})")
+            raise ValueError(f"actuator.network_file required for model_type={model_type}")
+        log_message(f"  {group_name}: ImplicitActuator + {model_type} ({network_file})")
         return {group_name: load_implicit_actuator_cfg(yaml_file, joint_exprs)}
 
     else:
         raise ValueError(
             f"Unknown actuator model_type '{model_type}'. "
-            "Choose from: implicit, dcmotor, lstm, lstm_perjoint, fmu, hybrid_residual, full_torque_enriched"
+            "Choose from: implicit, dcmotor, lstm, lstm_perjoint, fmu, "
+            "hybrid_residual, full_torque_enriched, h1_arm_full_torque_enriched"
         )
 
 
@@ -1691,24 +1932,40 @@ class NewtonJointMotionBenchmark:
                             cross_joint_map=arm_cfg.get("cross_joint_map"),
                         )
 
-        if act_cfg.get("model_type") == "full_torque_enriched":
+        if act_cfg.get("model_type") in ("full_torque_enriched", "h1_arm_full_torque_enriched"):
             network_file = act_cfg.get("network_file")
             stats_file = act_cfg.get("stats_file")
             if not network_file or not stats_file:
-                raise ValueError("full_torque_enriched requires actuator.network_file and actuator.stats_file")
+                raise ValueError(f"{act_cfg.get('model_type')} requires actuator.network_file and actuator.stats_file")
             model_path = os.path.join(_ACTUATOR_MODELS_BASE, network_file)
             stats_path = os.path.join(_ACTUATOR_MODELS_BASE, stats_file)
             for name, actuator in self.robot.actuators.items():
                 if type(actuator).__name__ == "ImplicitActuator" and (
                     name in ("arms", "arm") or name.startswith("arms_")
                 ):
-                    log_message(f"Patching '{name}' with full_torque_enriched: {os.path.basename(model_path)}")
-                    _patch_g1_fulltorque_enriched(
-                        actuator=actuator,
-                        robot=self.robot,
-                        model_path=model_path,
-                        stats_path=stats_path,
+                    log_message(
+                        f"Patching '{name}' with {act_cfg.get('model_type')}: {os.path.basename(model_path)}"
                     )
+                    if act_cfg.get("model_type") == "h1_arm_full_torque_enriched":
+                        _patch_h1_fulltorque_enriched(
+                            actuator=actuator,
+                            robot=self.robot,
+                            model_path=model_path,
+                            stats_path=stats_path,
+                            include_qfrc_bias=bool(act_cfg.get("include_qfrc_bias", True)),
+                            include_prev_torque=bool(act_cfg.get("include_prev_torque", True)),
+                            hidden_size=int(act_cfg.get("hidden_size", 128)),
+                            num_layers=int(act_cfg.get("num_layers", 2)),
+                            pd_plus_gru=bool(act_cfg.get("pd_plus_gru", True)),
+                            output_scale=act_cfg.get("output_scale", 1.0),
+                        )
+                    else:
+                        _patch_g1_fulltorque_enriched(
+                            actuator=actuator,
+                            robot=self.robot,
+                            model_path=model_path,
+                            stats_path=stats_path,
+                        )
 
         # Reset scene state
         self.scene.reset()
