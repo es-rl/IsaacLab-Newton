@@ -129,6 +129,12 @@ def _reduction(baseline: float, candidate: float) -> float:
     return 100.0 * (baseline - candidate) / baseline if baseline else 0.0
 
 
+def _lower_higher(percent_lower: float) -> str:
+    if percent_lower >= 0:
+        return f"{percent_lower:.1f}% lower"
+    return f"{abs(percent_lower):.1f}% higher"
+
+
 def _motion_summary(metrics: dict[str, dict[str, pd.DataFrame]], motion: str | None = None) -> dict[str, float]:
     out = {}
     for metric in METRIC_SHEETS:
@@ -162,15 +168,13 @@ def _plot_motion(
         axes = np.asarray([axes])
 
     title = (
-        f"H1 arm v28 PD+GRU comparison - {motion}\n"
-        f"Position: PD {summary['pd_position_rmse']:.4f}, "
-        f"lag20 {summary['sysid_position_rmse']:.4f}, GRU {summary['gru_position_rmse']:.4f} "
-        f"| GRU {summary['gru_position_reduction_vs_pd_percent']:.1f}% vs PD, "
-        f"{summary['gru_position_improvement_vs_sysid_percent']:.1f}% vs lag20\n"
-        f"Torque: PD {summary['pd_torque_rmse']:.4f}, "
-        f"lag20 {summary['sysid_torque_rmse']:.4f}, GRU {summary['gru_torque_rmse']:.4f} "
-        f"| GRU {summary['gru_torque_reduction_vs_pd_percent']:.1f}% vs PD, "
-        f"{summary['gru_torque_improvement_vs_sysid_percent']:.1f}% vs lag20"
+        f"H1 right arm sim-to-real - {motion}\n"
+        "v28 PD+GRU vs PD baseline: "
+        f"position RMSE {_lower_higher(summary['gru_position_reduction_vs_pd_percent'])}, "
+        f"torque RMSE {_lower_higher(summary['gru_torque_reduction_vs_pd_percent'])}\n"
+        "v28 PD+GRU vs lag20 SysID: "
+        f"position RMSE {_lower_higher(summary['gru_position_improvement_vs_sysid_percent'])}, "
+        f"torque RMSE {_lower_higher(summary['gru_torque_improvement_vs_sysid_percent'])}"
     )
     fig.suptitle(title, fontsize=10, fontweight="bold", y=0.985)
 
