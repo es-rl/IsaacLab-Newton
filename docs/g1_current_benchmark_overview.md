@@ -108,6 +108,55 @@ Command position is used to drive the replay and can be shown in plots, but it
 is not the scored target for RMSE. The scored target is measured real robot
 position, velocity, or torque from `state_motor.csv`.
 
+## What interpolation means here
+
+Interpolation is only a timestamp-resampling step. The real robot and simulator
+logs are not guaranteed to write samples at exactly the same timestamps, even
+when they replay the same command sequence. To compare them point-by-point, the
+sim trace is linearly sampled at the real log timestamps inside the overlapping
+time window.
+
+This is not time warping. The analysis does not stretch, compress, shift, or
+phase-align the sim output to reduce error. It also does not choose a
+model-specific offset. The time axes come from the recorded logs after timestamp
+normalization, and the same scoring rule is applied to default PD and every
+candidate model.
+
+In plain terms:
+
+- allowed: sample the sim curve at the real timestamps
+- not allowed: slide the sim curve forward/backward until RMSE is smaller
+- not allowed: stretch/compress the sim timeline to match peaks
+- not allowed: score against command position instead of measured real position
+- not allowed: drop bad motions or bad joints from the headline aggregate
+
+## Why this is not funny business
+
+The benchmark is meant to answer one question: given the same real command
+trajectory and the same measured initial state, does the simulator reproduce the
+measured real actuator response better than default PD?
+
+The setup choices are there to avoid confounds, not to hide error:
+
+- `--real-init-pose-sync` gives every model the measured row-0 state for that
+  experiment. Without it, the metric includes arbitrary cold-start error from
+  the sim's home pose.
+- the 5 second buffer is applied to every model. It lets the fixed-base physics
+  state settle before scoring begins.
+- learned recurrent actuators reset before the buffer, then warm during the
+  buffer. Resetting after the buffer would score an artificially cold recurrent
+  state.
+- each motion is run independently because each real CSV is an independent
+  gantry capture.
+- all 10 motions are included in the aggregate.
+- the baseline and candidate models use the same real files, same command
+  replay, same init-sync rule, same buffer rule, and same scoring code.
+
+The main caveat is that this is a fixed-base gantry actuator benchmark, not a
+free-walking whole-body benchmark. The old concatenated version can still be
+reported separately as a long-horizon drift stress test, but it answers a
+different question and should not be mixed with the primary per-motion RMSE.
+
 ## Plot outputs
 
 Fresh plots from the same current clean benchmark outputs:
