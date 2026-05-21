@@ -1,5 +1,8 @@
 # G1 Arm Sim2Real Benchmark Repro
 
+For the cross-arm/leg benchmark source of truth, see
+`docs/g1_current_benchmark_overview.md`.
+
 This branch is the lean repro path for the G1 right-arm benchmark from current
 `origin/develop`. It intentionally brings over only the pieces needed to run:
 

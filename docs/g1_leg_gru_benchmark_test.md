@@ -1,5 +1,8 @@
 # G1 leg GRU benchmark test
 
+For the cross-arm/leg primary benchmark source of truth, see
+`docs/g1_current_benchmark_overview.md`.
+
 Experimental branch: `vbhavanantha/g1-leg-gru-benchmark-test`
 
 This branch tests the old G1 right-leg full-torque GRU on the same fixed-base/gantry benchmark setup used by the clean leg SysID branch. This is not walking. The torso/root is fixed, matching the physical gantry experiments.
