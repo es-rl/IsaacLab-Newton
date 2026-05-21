@@ -78,14 +78,19 @@ Fresh plots from the same current clean benchmark outputs:
 ```text
 /home/vbhavanantha/IsaacLab-Newton-g1-repro/output/g1_plots_current/arm_command_real_defaultpd_prodgru/g1_arm_command_real_defaultpd_prodgru_all_motions.pdf
 /home/vbhavanantha/IsaacLab-Newton-g1-repro/output/g1_plots_current/arm_command_real_defaultpd_prodgru/g1_arm_defaultpd_vs_prodgru_rmse_summary.png
-/home/vbhavanantha/IsaacLab-Newton-g1-repro/output/g1_plots_current/leg_command_real_defaultpd_lag10sysid/g1_leg_command_real_defaultpd_lag10sysid_all_motions.pdf
-/home/vbhavanantha/IsaacLab-Newton-g1-repro/output/g1_plots_current/leg_command_real_defaultpd_lag10sysid/g1_leg_defaultpd_vs_lag10sysid_rmse_summary.png
+/home/vbhavanantha/IsaacLab-Newton-g1-repro/output/g1_plots_current/leg_real_defaultpd_lag10sysid/g1_leg_real_defaultpd_lag10sysid_all_motions.pdf
+/home/vbhavanantha/IsaacLab-Newton-g1-repro/output/g1_plots_current/leg_real_defaultpd_lag10sysid/g1_leg_defaultpd_vs_lag10sysid_rmse_summary.png
 ```
 
-The plot script interpolates sim and command traces onto the real timeline for
-display and per-motion plot labels. Because of that interpolation detail, the
-plot aggregate can differ slightly from the benchmark summary numbers. The
-headline numbers above remain the primary benchmark numbers.
+The arm trace plots show command, real, default PD, and production GRU. The leg
+trace plots intentionally omit command position and show real, default PD, and
+lag10 SysID; this keeps the leg figure focused on the scored real-vs-sim
+comparison.
+
+The plot script interpolates sim traces onto the real timeline for display and
+per-motion plot labels. Because of that interpolation detail, the plot
+aggregate can differ slightly from the benchmark summary numbers. The headline
+numbers above remain the primary benchmark numbers.
 
 ## Why this is the correct primary benchmark
 
