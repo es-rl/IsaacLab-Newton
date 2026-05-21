@@ -1,0 +1,18 @@
+# G1 right-leg benchmark: Unitree SDK PD gains only.
+# No SysID armature/friction and no motor lag.
+
+simulation:
+  physics_freq: 500
+  control_freq: 500
+  render_freq: 500
+  integrator: implicitfast
+  solver_iterations: 10
+  ls_iterations: 10
+
+actuator:
+  model_type: implicit
+  yaml_file: g1/g1_leg_sdk_pd.yaml
+
+benchmark:
+  output_folder: output/g1_leg_benchmark_sdk_pd
+  real_data_root: input/sysid_data/g1

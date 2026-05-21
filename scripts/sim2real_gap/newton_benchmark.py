@@ -920,6 +920,7 @@ _G1_LEG_CFG = {
 _G1_LEG_ALIASES = (
     "g1_right_leg",
     "g1_right_leg_default_pd",
+    "g1_right_leg_sdk_pd",
     "g1_right_leg_v2_fixedpd_lag10_sysid",
 )
 _ROBOT_LEG_CFG = {}

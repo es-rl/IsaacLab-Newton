@@ -1,0 +1,6 @@
+right_hip_pitch
+right_hip_roll
+right_hip_yaw
+right_knee
+right_ankle_pitch
+right_ankle_roll

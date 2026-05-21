@@ -1,5 +1,8 @@
 # G1 Leg Sim2Real Benchmark Repro
 
+For the cross-arm/leg benchmark source of truth, see
+`docs/g1_current_benchmark_overview.md`.
+
 This branch adds the lean G1 right-leg benchmark surface on top of the clean G1
 arm repro branch. It is intentionally stacked separately from the arm PR so the
 arm reproduction can stay small and reviewable.
