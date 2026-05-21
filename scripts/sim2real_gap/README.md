@@ -202,9 +202,9 @@ actuator:
 ```
 
 `motion_files` should be either a SAGE-format motion directory
-(`control.csv`, `state_motor.csv`, `joint_list.txt`) or a directory of
-`*_motor.csv` recordings that can be converted to SAGE format. Use
-holdout data for the headline number.
+(`control.csv`, `state_motor.csv`, `joint_list.txt`, plus `event.csv` when
+available) or a directory of `*_motor.csv` recordings that can be converted
+to SAGE format. Use holdout data for the headline number.
 
 ### 2. Run the benchmark
 
@@ -273,6 +273,10 @@ separate drift stress test.
 - Motor torque in `state_motor.csv` must be in N·m; if your driver
   reports current (mA) you must convert before benchmarking, otherwise
   the torque-RMSE column is meaningless.
+- Existing SO-101 SAGE folders are staged with their sidecar metadata
+  files. If `event.csv` has `MOTION_END` but not SAGE's expected `DISABLE`
+  marker, the benchmark output adds a `DISABLE` row at the `MOTION_END`
+  timestamp so analysis can find the scored interval.
 - The shipped `so101_implicit.yaml` is a clean STS3215 template. It is a
   baseline, not a fitted result. Put fitted armature/friction/lag values
   in a separate YAML or overwrite the template only after recording the

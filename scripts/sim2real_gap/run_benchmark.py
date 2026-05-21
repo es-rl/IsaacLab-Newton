@@ -585,6 +585,30 @@ def _load_first_real_state(state_csv):
     raise ValueError(f"No STATE_MOTOR row found in {state_csv}")
 
 
+def _copy_sage_event_csv_for_analysis(src, dst):
+    """Copy event.csv, adding SAGE's expected DISABLE event if needed."""
+    try:
+        with open(src, newline="") as f:
+            reader = csv.DictReader(f)
+            rows = list(reader)
+            fieldnames = reader.fieldnames or ["type", "timestamp", "event"]
+
+        events = {row.get("event") for row in rows}
+        if "DISABLE" not in events:
+            motion_end = next((row for row in rows if row.get("event") == "MOTION_END"), None)
+            if motion_end is not None:
+                disable = dict(motion_end)
+                disable["event"] = "DISABLE"
+                rows.append(disable)
+
+        with open(dst, "w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(rows)
+    except Exception:
+        shutil.copy2(src, dst)
+
+
 def _stage_sage_real_motion(source_control_csv, motion_name, args):
     """Stage a SAGE real motion folder into the benchmark output tree."""
     source_dir = os.path.dirname(os.path.abspath(os.path.expanduser(source_control_csv)))
@@ -597,10 +621,23 @@ def _stage_sage_real_motion(source_control_csv, motion_name, args):
         return
 
     os.makedirs(dest_dir, exist_ok=True)
-    for name in required:
+    stage_names = set(required)
+    for name in os.listdir(source_dir):
+        src = os.path.join(source_dir, name)
+        if not os.path.isfile(src):
+            continue
+        if name.endswith((".bak", ".ma.bak")):
+            continue
+        if name.endswith((".csv", ".txt", ".json", ".yaml", ".yml")):
+            stage_names.add(name)
+
+    for name in sorted(stage_names):
         src = os.path.join(source_dir, name)
         dst = os.path.join(dest_dir, name)
         if os.path.exists(dst):
+            continue
+        if name == "event.csv":
+            _copy_sage_event_csv_for_analysis(src, dst)
             continue
         try:
             os.symlink(src, dst)
