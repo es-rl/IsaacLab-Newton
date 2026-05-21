@@ -26,6 +26,7 @@ import argparse
 import ast
 import csv
 import os
+import shutil
 import sys
 import tempfile
 
@@ -77,6 +78,11 @@ parser.add_argument(
     help="Motor command lag in milliseconds. Delays position targets by N physics steps. "
     "If not set, reads motor_lag_ms from the arms actuator YAML (if present).",
 )
+parser.add_argument(
+    "--real-init-pose-sync",
+    action="store_true",
+    help="Teleport scored joints to row 0 of real state_motor.csv after the buffer phase.",
+)
 parser.add_argument("--record-video", action="store_true", help="Record video")
 
 # Add AppLauncher args (--headless, --device, etc.)
@@ -114,6 +120,9 @@ for _attr, _section in [
 ]:
     if getattr(args, _attr) is None and _attr in _section:
         setattr(args, _attr, _section[_attr])
+
+if not args.real_init_pose_sync and "real_init_pose_sync" in _bench_cfg:
+    args.real_init_pose_sync = bool(_bench_cfg["real_init_pose_sync"])
 
 # motion_files and real_control_csv are mutually exclusive.
 # If CLI explicitly set one, discard the other (which came from config).
@@ -205,11 +214,21 @@ def _write_run_summary(output_folder, robot_name, motion_source, run_cfg, args):
         "simulation": run_cfg.get("simulation", {}),
         "benchmark": run_cfg.get("benchmark", {}),
         "actuator_model": actuator_info,
+        "runtime_options": {
+            "real_init_pose_sync": bool(getattr(args, "real_init_pose_sync", False)),
+        },
         "cli_overrides": {},
     }
 
     # Record CLI overrides that differ from config defaults
-    for attr in ("kp", "kd", "motor_lag_ms", "physics_freq", "render_freq", "control_freq"):
+    for attr in (
+        "kp",
+        "kd",
+        "motor_lag_ms",
+        "physics_freq",
+        "render_freq",
+        "control_freq",
+    ):
         val = getattr(args, attr, None)
         if val is not None:
             summary["cli_overrides"][attr] = val
@@ -498,6 +517,74 @@ def _convert_parquets_to_motor_csv(parquet_dir, joint_name="elbow"):
     return parquet_dir
 
 
+def _find_real_state_csv_for_motion(motion_file, motion_name, args, bench_cfg):
+    """Find the real state_motor.csv used for init-pose sync."""
+    candidates = [
+        os.path.join(args.output_folder, "real", args.robot_name, args.motion_source, motion_name, "state_motor.csv"),
+    ]
+
+    fallback_root = bench_cfg.get("real_data_root")
+    if fallback_root:
+        candidates.append(os.path.join(os.path.expanduser(fallback_root), motion_name, "state_motor.csv"))
+
+    if args.motion_files:
+        motion_root = os.path.expanduser(args.motion_files)
+        candidates.extend(
+            [
+                os.path.join(motion_root, "state_motor.csv"),
+                os.path.join(motion_root, motion_name, "state_motor.csv"),
+            ]
+        )
+
+    if args.real_control_csv:
+        candidates.append(os.path.join(os.path.dirname(os.path.expanduser(args.real_control_csv)), "state_motor.csv"))
+
+    motion_dir = os.path.dirname(os.path.expanduser(motion_file))
+    candidates.append(os.path.join(motion_dir, "state_motor.csv"))
+
+    for path in candidates:
+        if path and os.path.isfile(path):
+            return path
+    return None
+
+
+def _load_first_real_state(state_csv):
+    """Read the first STATE_MOTOR row from a SAGE state_motor.csv file."""
+    with open(state_csv) as f:
+        reader = csv.reader(f)
+        next(reader, None)
+        for row in reader:
+            if row and row[0] == "STATE_MOTOR":
+                positions = list(ast.literal_eval(row[2]))
+                velocities = list(ast.literal_eval(row[3])) if len(row) > 3 else None
+                return positions, velocities
+    raise ValueError(f"No STATE_MOTOR row found in {state_csv}")
+
+
+def _stage_sage_real_motion(source_control_csv, motion_name, args):
+    """Stage a SAGE real motion folder into the benchmark output tree."""
+    source_dir = os.path.dirname(os.path.abspath(os.path.expanduser(source_control_csv)))
+    required = ("control.csv", "state_motor.csv", "joint_list.txt")
+    if not all(os.path.isfile(os.path.join(source_dir, name)) for name in required):
+        return
+
+    dest_dir = os.path.join(args.output_folder, "real", args.robot_name, args.motion_source, motion_name)
+    if os.path.abspath(dest_dir) == source_dir:
+        return
+
+    os.makedirs(dest_dir, exist_ok=True)
+    for name in required:
+        src = os.path.join(source_dir, name)
+        dst = os.path.join(dest_dir, name)
+        if os.path.exists(dst):
+            continue
+        try:
+            os.symlink(src, dst)
+        except OSError:
+            shutil.copy2(src, dst)
+    log_message(f"Staged SAGE real data for {motion_name}: {dest_dir}")
+
+
 def _run_motions(benchmark, motions, temp_files):
     """Run a list of (motion_file, motion_name) pairs, batched or sequential.
 
@@ -571,6 +658,7 @@ def main():
         motions.append((motion_file, motion_name))
         if motion_file != args.real_control_csv:
             temp_files.add(motion_file)
+        _stage_sage_real_motion(args.real_control_csv, motion_name, args)
 
     elif _is_parquet_dir(args.motion_files) and not _is_motor_csv_dir(args.motion_files):
         _convert_parquets_to_motor_csv(args.motion_files)
@@ -616,11 +704,44 @@ def main():
         for motion_file in motion_files_list:
             motion_name = get_motion_name(motion_file)
             motions.append((motion_file, motion_name))
+            _stage_sage_real_motion(motion_file, motion_name, args)
 
     log_message(f"Prepared {len(motions)} motions for benchmark")
 
+    args.real_init_pose = {}
+    args.real_init_vel = {}
+    if args.real_init_pose_sync:
+        init_pose = {}
+        init_vel = {}
+        for motion_file, motion_name in motions:
+            state_csv = _find_real_state_csv_for_motion(motion_file, motion_name, args, _bench_cfg)
+            if not state_csv:
+                log_message(f"WARNING: --real-init-pose-sync requested but state_motor.csv not found for {motion_name}")
+                continue
+            try:
+                positions, velocities = _load_first_real_state(state_csv)
+            except (ValueError, SyntaxError) as exc:
+                log_message(f"WARNING: malformed init state in {state_csv}: {exc}")
+                continue
+            init_pose[motion_name] = positions
+            if velocities is not None:
+                init_vel[motion_name] = velocities
+        args.real_init_pose = init_pose
+        args.real_init_vel = init_vel
+        log_message(
+            f"--real-init-pose-sync: populated init pose for {len(init_pose)}/{len(motions)} motions "
+            f"(init velocity for {len(init_vel)})"
+        )
+
     # Create benchmark with num_envs matching motion count for parallel execution
-    num_envs = args.num_envs if args.num_envs is not None else (len(motions) if len(motions) > 1 else 1)
+    if args.num_envs is not None:
+        num_envs = args.num_envs
+    elif args.real_init_pose_sync:
+        # Init-pose sync is a per-motion operation; default to one motion per
+        # rollout so each motion starts from its own recorded row-0 state.
+        num_envs = 1
+    else:
+        num_envs = len(motions) if len(motions) > 1 else 1
     benchmark = NewtonJointMotionBenchmark(args, num_envs=num_envs)
 
     _write_run_summary(args.output_folder, args.robot_name, args.motion_source, _run_cfg, args)

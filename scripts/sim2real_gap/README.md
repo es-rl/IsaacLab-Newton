@@ -167,25 +167,29 @@ Analysis produces per-joint comparison plots (with RMSE), boxplots, and a metric
 > (`scripts/sysid/README.md#so-101`) is unaffected and works
 > independently.
 
-Validate SO-101 sysid output against held-out real motor data. Assumes you
-have already produced fitted parameters via
+Validate SO-101 sysid output against held-out real motor data. This follows
+the same current sim-to-real convention used by the G1/H1 benchmark runs:
+fixed-base replay, one recorded motion at a time, init-pose sync to the
+first real sample, a short buffer settle, then SAGE RMSE on the recorded
+motion. Assumes you have already produced fitted parameters via
 [`scripts/sysid/README.md`](../sysid/README.md#so-101); the benchmark
 replays a real-robot recording in Newton sim and the analysis step
 computes per-joint sim-vs-real metrics.
 
 ### 1. Configure data paths
 
-Edit `input/run_configs/so101/so101.yaml` and replace the `<motion_dir>`
-placeholders:
+Edit `input/run_configs/so101/so101.yaml` and replace the
+`<heldout_motion_dir>` placeholders:
 
 ```yaml
 benchmark:
   # Path can be anywhere on disk — the shipped placeholder lives under
-  # input/motion_files/so101/<motion_dir>; this example uses sysid_data/
-  # to reuse the same recordings produced for sysid.
-  motion_files: input/sysid_data/so101/my_holdout_motion   # was <motion_dir>
-  motion_name: my_holdout_motion                           # was customer_motion
+  # input/sysid_data/so101/<heldout_motion_dir>; this example uses a
+  # held-out recording, not the same split used to fit sysid parameters.
+  motion_files: input/sysid_data/so101/my_holdout_motion   # was <heldout_motion_dir>
+  motion_name: so101_holdout                               # parent output folder
   output_folder: output/sim2real_benchmark
+  real_init_pose_sync: true
 
 analysis:
   output_dir: output/sim2real_analysis
@@ -197,8 +201,10 @@ actuator:
   yaml_file: so101/so101_implicit.yaml         # the YAML you populated from sysid
 ```
 
-`motion_files` should be a SAGE-format directory (`control.csv`,
-`state_motor.csv`, `joint_list.txt`) — the same format consumed by sysid.
+`motion_files` should be either a SAGE-format motion directory
+(`control.csv`, `state_motor.csv`, `joint_list.txt`) or a directory of
+`*_motor.csv` recordings that can be converted to SAGE format. Use
+holdout data for the headline number.
 
 ### 2. Run the benchmark
 
@@ -210,8 +216,9 @@ python scripts/sim2real_gap/run_benchmark.py --robot-name so101 --headless
 python scripts/sim2real_gap/run_benchmark.py \
     --robot-name so101 \
     --motion-files input/sysid_data/so101/my_holdout_motion \
-    --motion-name my_holdout_motion \
+    --motion-name so101_holdout \
     --output-folder output/sim2real_benchmark \
+    --real-init-pose-sync \
     --headless
 ```
 
@@ -222,7 +229,7 @@ The benchmark writes sim joint trajectories to
 `output/sim2real_benchmark/sim/so101/<motion_name>_implicit/` and stages
 the real recording at
 `output/sim2real_benchmark/real/so101/<motion_name>/` (auto-converted to
-SAGE if needed).
+SAGE if needed, or symlinked when the input was already SAGE format).
 
 ### 3. Run analysis
 
@@ -245,6 +252,11 @@ joint, and a boxplot summary. Compare against the same metrics produced
 from the unfit STS3215 template to quantify the sim-to-real improvement
 delivered by your CMA-ES fit.
 
+For a multi-motion folder, report the pooled SAGE RMSE across the held-out
+motions and joints. Do not concatenate motions into one artificial long
+episode for the primary number; use long concatenated playback only as a
+separate drift stress test.
+
 ### Notes
 
 - `scripts/sim2real_gap/configs/so101_joints.yaml` and
@@ -254,9 +266,17 @@ delivered by your CMA-ES fit.
   need to edit them.
 - The SO-101 USD is fixed-base, so `--fix-root` is the default and there
   is no torso/pelvis joint to suppress.
+- `real_init_pose_sync: true` makes the benchmark teleport the scored
+  joints to row 0 of the real `state_motor.csv` after the buffer phase.
+  The buffer still matters because it lets the solver settle before
+  replay starts.
 - Motor torque in `state_motor.csv` must be in N·m; if your driver
   reports current (mA) you must convert before benchmarking, otherwise
   the torque-RMSE column is meaningless.
+- The shipped `so101_implicit.yaml` is a clean STS3215 template. It is a
+  baseline, not a fitted result. Put fitted armature/friction/lag values
+  in a separate YAML or overwrite the template only after recording the
+  exact provenance.
 
 ---
 

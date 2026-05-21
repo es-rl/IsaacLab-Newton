@@ -35,6 +35,8 @@ SO101_JOINT_NAMES = [
 
 
 _BENCH_PATH = os.path.join(_REPO, "scripts", "sim2real_gap", "newton_benchmark.py")
+_RUNNER_PATH = os.path.join(_REPO, "scripts", "sim2real_gap", "run_benchmark.py")
+_SO101_RUN_CFG_PATH = os.path.join(_REPO, "input", "run_configs", "so101", "so101.yaml")
 
 # Match the so101 entry inside _BENCHMARK_ROBOT_CONFIGS: the dict key,
 # its scene_cfg_cls value, and the actuator_yaml string.
@@ -112,3 +114,28 @@ def test_so101_sage_configs_exist() -> None:
     assert joints_txt == SO101_JOINT_NAMES, (
         f"so101_valid_joints.txt {joints_txt} does not match expected order {SO101_JOINT_NAMES}"
     )
+
+
+def test_so101_run_config_uses_current_replay_methodology() -> None:
+    """SO-101 defaults should match the current G1/H1-style replay setup."""
+    with open(_SO101_RUN_CFG_PATH) as f:
+        cfg = yaml.safe_load(f)
+
+    bench = cfg["benchmark"]
+    assert bench["fix_root"] is True
+    assert bench["real_init_pose_sync"] is True
+    assert bench["buffer_time"] > 0.0
+    assert "input/sysid_data/so101" in bench["motion_files"]
+    assert "heldout" in bench["motion_files"]
+
+
+def test_run_benchmark_supports_configured_init_pose_sync() -> None:
+    """The generic runner must support config-driven init-pose sync."""
+    with open(_RUNNER_PATH) as f:
+        source = f.read()
+
+    assert "--real-init-pose-sync" in source
+    assert "real_init_pose_sync" in source
+    assert "args.real_init_pose" in source
+    assert "state_motor.csv" in source
+    assert "_stage_sage_real_motion" in source

@@ -997,6 +997,8 @@ class NewtonJointMotionBenchmark:
         self.valid_joints_file = args.valid_joints_file
         self.output_folder = args.output_folder
         self.fix_root = args.fix_root
+        self._real_init_pose = getattr(args, "real_init_pose", None) or {}
+        self._real_init_vel = getattr(args, "real_init_vel", None) or {}
         self.physics_freq = args.physics_freq
         self.render_freq = args.render_freq
         self.original_control_freq = args.original_control_freq
@@ -1614,6 +1616,26 @@ class NewtonJointMotionBenchmark:
 
         buffer_end_time = self._sim_time
 
+        init_pose = self._real_init_pose.get(self.motion_name)
+        if init_pose is not None:
+            full_pos = self._to_torch(self.robot.data.joint_pos).clone()
+            full_vel = self._to_torch(self.robot.data.joint_vel).clone()
+            pose_tensor = torch.tensor(init_pose, dtype=full_pos.dtype, device=self.robot.device)
+            if pose_tensor.numel() == self.joint_indices.numel():
+                full_pos[0, self.joint_indices] = pose_tensor
+                init_vel = self._real_init_vel.get(self.motion_name)
+                if init_vel is not None:
+                    vel_tensor = torch.tensor(init_vel, dtype=full_vel.dtype, device=self.robot.device)
+                    if vel_tensor.numel() == self.joint_indices.numel():
+                        full_vel[0, self.joint_indices] = vel_tensor
+                self.robot.write_joint_state_to_sim(full_pos, full_vel)
+                tqdm.write("[Benchmark] Init-pose sync: teleported sim to real row-0 pose")
+            else:
+                tqdm.write(
+                    f"[Benchmark] WARNING: init pose has {pose_tensor.numel()} joints "
+                    f"but benchmark tracks {self.joint_indices.numel()}; skipping teleport"
+                )
+
         joint_pos = self._to_torch(self.robot.data.joint_pos)
         current_pos = joint_pos[0, self.joint_indices].cpu().numpy()
         tqdm.write(f"[Benchmark] Buffer done. Starting motion ({num_steps} control steps)...")
@@ -1790,6 +1812,39 @@ class NewtonJointMotionBenchmark:
             pbar.update(1)
 
         buffer_end_time = self._sim_time
+
+        if self._real_init_pose:
+            full_pos = self._to_torch(self.robot.data.joint_pos).clone()
+            full_vel = self._to_torch(self.robot.data.joint_vel).clone()
+            teleport_count = 0
+            vel_sync_count = 0
+            for env_idx, mname in enumerate(all_names):
+                pose = self._real_init_pose.get(mname)
+                if pose is None:
+                    continue
+                pose_tensor = torch.tensor(pose, dtype=full_pos.dtype, device=self.robot.device)
+                if pose_tensor.numel() != self.joint_indices.numel():
+                    tqdm.write(
+                        f"[Benchmark] WARNING: env {env_idx} ({mname}): init pose has "
+                        f"{pose_tensor.numel()} joints but benchmark tracks "
+                        f"{self.joint_indices.numel()}; skipping teleport"
+                    )
+                    continue
+                full_pos[env_idx, self.joint_indices] = pose_tensor
+                vel = self._real_init_vel.get(mname)
+                if vel is not None:
+                    vel_tensor = torch.tensor(vel, dtype=full_vel.dtype, device=self.robot.device)
+                    if vel_tensor.numel() == self.joint_indices.numel():
+                        full_vel[env_idx, self.joint_indices] = vel_tensor
+                        vel_sync_count += 1
+                teleport_count += 1
+            if teleport_count:
+                self.robot.write_joint_state_to_sim(full_pos, full_vel)
+                tqdm.write(
+                    f"[Benchmark] Init-pose sync: teleported {teleport_count}/{n_envs} envs "
+                    f"to real row-0 pose (init velocity synced for {vel_sync_count})"
+                )
+
         tqdm.write(f"[Benchmark] Buffer done. Running {n_envs} motions in parallel...")
 
         # Command delay buffers (per-env)

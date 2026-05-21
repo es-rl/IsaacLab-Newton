@@ -18,14 +18,16 @@ simulation:
 benchmark:
   fix_root: true
   buffer_time: 2.0            # seconds - settle before motion playback
+  real_init_pose_sync: true   # teleport scored joints to real row-0 pose after buffer
   motor_lag_ms: null          # null = read from actuator YAML
   kp: null                    # null = use actuator YAML defaults
   kd: null
 
-  # Motion data - placeholder; customer fills in path to their motion files.
-  motion_files: input/motion_files/so101/<motion_dir>
+  # Holdout motion data - placeholder; customer fills in path to SAGE real data
+  # or motor CSV recordings. Do not point this at the same split used for sysid.
+  motion_files: input/sysid_data/so101/<heldout_motion_dir>
   original_control_freq: null                                # Hz - auto-detected from CSV timestamps if null
-  motion_name: customer_motion                               # motion name for output directory
+  motion_name: so101_holdout                                 # parent output folder / motion source
 
   # Output paths
   output_folder: output/sim2real_benchmark
