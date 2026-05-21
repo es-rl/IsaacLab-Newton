@@ -116,6 +116,19 @@ when they replay the same command sequence. To compare them point-by-point, the
 sim trace is linearly sampled at the real log timestamps inside the overlapping
 time window.
 
+The real and sim logs are both nominally 500 Hz, but nominal frequency is not
+the same as identical sample times. The sim log is written on an exact control
+grid, usually every `0.002` seconds. The real robot log has timestamp jitter and
+occasional short/long intervals from the recording stack. In the current G1
+outputs, row counts usually match, but the real `dt` range is not perfectly
+constant. For example, checked current runs had real `dt` ranges around
+`0.00027-0.0138` seconds while sim `dt` stayed at `0.002` seconds.
+
+That is why timestamp-based scoring is preferred over row-index scoring. A
+row-aligned sanity check is still useful, and it lands essentially the same for
+the current leg run, but the primary metric should compare signals at the same
+time, not merely at the same row number.
+
 This is not time warping. The analysis does not stretch, compress, shift, or
 phase-align the sim output to reduce error. It also does not choose a
 model-specific offset. The time axes come from the recorded logs after timestamp
