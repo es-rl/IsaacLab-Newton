@@ -42,6 +42,38 @@ The leg GRU has been tested separately on
 torque improvement over lag10 SysID, but it worsens position and velocity RMSE,
 so it is not the primary current leg model.
 
+## Leg baseline gains
+
+The G1 leg baseline is `g1_right_leg_default_pd`, which loads:
+
+```text
+input/actuator_models/g1/g1_leg_implicit.yaml
+```
+
+Those are stock IsaacLab G1 implicit actuator gains, not SysID gains and not the
+real Unitree SDK gains.
+
+| Joint | Baseline kp | Baseline kd |
+| --- | ---: | ---: |
+| hip pitch | 200 | 5 |
+| hip roll | 150 | 5 |
+| hip yaw | 150 | 5 |
+| knee | 200 | 5 |
+| ankle pitch | 40 | 1 |
+| ankle roll | 40 | 1 |
+
+The primary leg SysID model, `g1_right_leg_v2_fixedpd_lag10_sysid`, instead
+uses the fixed SDK-style PD gains:
+
+```text
+kp = [60, 60, 60, 100, 40, 40]
+kd = [1, 1, 1, 2, 1, 1]
+```
+
+plus identified armature, dynamic friction, viscous friction, and a 10 ms motor
+lag. That is why the leg comparison is best described as "stock IsaacLab PD
+baseline vs fixed-PD lag10 SysID."
+
 ## Current primary results
 
 Arm run folder:
