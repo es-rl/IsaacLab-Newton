@@ -1,0 +1,51 @@
+# G1 right leg — Unitree SDK PD gains, no identified actuator parameters.
+#
+# This is the controller-matched baseline for the gantry captures. The real
+# experiments were commanded with these SDK low-level gains, so this config
+# separates the effect of matching the commanded PD gains from the effect of
+# SysID armature/friction/lag.
+
+effort_limit_sim: 139.0
+velocity_limit_sim: 30.0
+
+stiffness:
+  .*_hip_pitch_joint: 60.0
+  .*_hip_roll_joint: 60.0
+  .*_hip_yaw_joint: 60.0
+  .*_knee_joint: 100.0
+  .*_ankle_pitch_joint: 40.0
+  .*_ankle_roll_joint: 40.0
+
+damping:
+  .*_hip_pitch_joint: 1.0
+  .*_hip_roll_joint: 1.0
+  .*_hip_yaw_joint: 1.0
+  .*_knee_joint: 2.0
+  .*_ankle_pitch_joint: 1.0
+  .*_ankle_roll_joint: 1.0
+
+motor_lag_ms: 0.0
+
+armature:
+  .*_hip_pitch_joint: 0.01
+  .*_hip_roll_joint: 0.01
+  .*_hip_yaw_joint: 0.01
+  .*_knee_joint: 0.01
+  .*_ankle_pitch_joint: 0.01
+  .*_ankle_roll_joint: 0.01
+
+dynamic_friction:
+  .*_hip_pitch_joint: 0.0
+  .*_hip_roll_joint: 0.0
+  .*_hip_yaw_joint: 0.0
+  .*_knee_joint: 0.0
+  .*_ankle_pitch_joint: 0.0
+  .*_ankle_roll_joint: 0.0
+
+viscous_friction:
+  .*_hip_pitch_joint: 0.0
+  .*_hip_roll_joint: 0.0
+  .*_hip_yaw_joint: 0.0
+  .*_knee_joint: 0.0
+  .*_ankle_pitch_joint: 0.0
+  .*_ankle_roll_joint: 0.0

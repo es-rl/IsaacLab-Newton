@@ -35,7 +35,7 @@ The evaluation method is the same, but the actuator model being evaluated is not
 | Robot slice | Baseline | Current best reported model | Joints | Learned recurrent path |
 | --- | --- | --- | ---: | --- |
 | right arm | `g1_right_arm_default_pd` | `g1_right_arm_fulltorque_enriched` | 4 | yes, production full-torque GRU |
-| right leg | `g1_right_leg_default_pd` | `g1_right_leg_v2_fixedpd_lag10_sysid` | 6 | no, fixed-PD lag10 SysID |
+| right leg | `g1_right_leg_default_pd` plus `g1_right_leg_sdk_pd` reference | `g1_right_leg_v2_fixedpd_lag10_sysid` | 6 | no, fixed-PD lag10 SysID |
 
 The leg GRU has been tested separately on
 `vbhavanantha/g1-leg-gru-benchmark-test`. It runs mechanically and gives a tiny
@@ -62,8 +62,16 @@ real Unitree SDK gains.
 | ankle pitch | 40 | 1 |
 | ankle roll | 40 | 1 |
 
-The primary leg SysID model, `g1_right_leg_v2_fixedpd_lag10_sysid`, instead
-uses the fixed SDK-style PD gains:
+The real gantry experiments were commanded with Unitree SDK low-level gains, so
+there is also a controller-matched baseline:
+
+```text
+input/actuator_models/g1/g1_leg_sdk_pd.yaml
+```
+
+This uses the SDK gains only, with no identified armature/friction and no motor
+lag. The primary leg SysID model, `g1_right_leg_v2_fixedpd_lag10_sysid`, uses
+the same fixed SDK-style PD gains:
 
 ```text
 kp = [60, 60, 60, 100, 40, 40]
@@ -71,8 +79,14 @@ kd = [1, 1, 1, 2, 1, 1]
 ```
 
 plus identified armature, dynamic friction, viscous friction, and a 10 ms motor
-lag. That is why the leg comparison is best described as "stock IsaacLab PD
-baseline vs fixed-PD lag10 SysID."
+lag.
+
+For presentation, keep these two leg comparisons separate:
+
+- stock IsaacLab PD vs lag10 SysID: "how much better than a fresh IsaacLab G1
+  baseline?"
+- SDK-PD-only vs lag10 SysID: "how much better after matching the real
+  controller gains?"
 
 ## Current primary results
 
@@ -99,6 +113,22 @@ Leg run folder:
 | default PD | 0.042210 rad | 0.126244 rad/s | 1.476786 Nm |
 | v2 fixed-PD lag10 SysID | 0.016109 rad | 0.096804 rad/s | 1.013082 Nm |
 | reduction | 61.8% | 23.3% | 31.4% |
+
+Controller-matched leg baseline run folder:
+
+```text
+/home/vbhavanantha/IsaacLab-Newton-g1-repro/output/g1_leg_sdk_pd_full_20260521
+```
+
+Same interpolation scorer as the updated leg plots:
+
+| Leg config | Position RMSE | Velocity RMSE | Torque RMSE |
+| --- | ---: | ---: | ---: |
+| stock IsaacLab PD | 0.042358 rad | 0.127944 rad/s | 1.477597 Nm |
+| SDK PD only | 0.022756 rad | 0.137900 rad/s | 1.440068 Nm |
+| v2 fixed-PD lag10 SysID | 0.015905 rad | 0.096691 rad/s | 1.014856 Nm |
+| SDK PD improvement vs stock | 46.3% | -7.8% | 2.5% |
+| lag10 SysID improvement vs SDK PD | 30.1% | 29.9% | 29.5% |
 
 Lower RMSE is better. A positive reduction percentage means the tested model has
 lower error than default PD.
@@ -209,14 +239,14 @@ Fresh plots from the same current clean benchmark outputs:
 ```text
 /home/vbhavanantha/IsaacLab-Newton-g1-repro/output/g1_plots_current/arm_command_real_defaultpd_prodgru/g1_arm_command_real_defaultpd_prodgru_all_motions.pdf
 /home/vbhavanantha/IsaacLab-Newton-g1-repro/output/g1_plots_current/arm_command_real_defaultpd_prodgru/g1_arm_defaultpd_vs_prodgru_rmse_summary.png
-/home/vbhavanantha/IsaacLab-Newton-g1-repro/output/g1_plots_current/leg_real_defaultpd_lag10sysid/g1_leg_real_defaultpd_lag10sysid_all_motions.pdf
-/home/vbhavanantha/IsaacLab-Newton-g1-repro/output/g1_plots_current/leg_real_defaultpd_lag10sysid/g1_leg_defaultpd_vs_lag10sysid_rmse_summary.png
+/home/vbhavanantha/IsaacLab-Newton-g1-repro/output/g1_plots_current/leg_real_stockpd_sdkpd_lag10sysid/g1_leg_real_stockpd_sdkpd_lag10sysid_all_motions.pdf
+/home/vbhavanantha/IsaacLab-Newton-g1-repro/output/g1_plots_current/leg_real_stockpd_sdkpd_lag10sysid/g1_leg_stockpd_sdkpd_lag10sysid_rmse_summary.png
 ```
 
 The arm trace plots show command, real, default PD, and production GRU. The leg
-trace plots intentionally omit command position and show real, default PD, and
-lag10 SysID; this keeps the leg figure focused on the scored real-vs-sim
-comparison.
+trace plots intentionally omit command position and show real, stock IsaacLab
+PD, SDK-PD-only, and lag10 SysID; this keeps the leg figure focused on the
+scored real-vs-sim comparison while showing the controller-gain caveat.
 
 The plot script interpolates sim traces onto the real timeline for display and
 per-motion plot labels. Because of that interpolation detail, the plot
@@ -304,6 +334,15 @@ conda activate env_isaaclab
   --experience /home/vbhavanantha/IsaacLab-Newton-g1-repro/apps/isaaclab.python.headless.kit
 
 ./isaaclab.sh -p scripts/sim2real_gap/run_benchmark.py \
+  --robot-name g1_right_leg_sdk_pd \
+  --motion-files input/sysid_data/g1/multijoint_v2_leg_test10_per_motion \
+  --output-folder output/g1_leg_sdk_pd_full_20260521 \
+  --real-init-pose-sync \
+  --num-envs 1 \
+  --headless \
+  --experience /home/vbhavanantha/IsaacLab-Newton-g1-repro/apps/isaaclab.python.headless.kit
+
+./isaaclab.sh -p scripts/sim2real_gap/run_benchmark.py \
   --robot-name g1_right_leg_v2_fixedpd_lag10_sysid \
   --motion-files input/sysid_data/g1/multijoint_v2_leg_test10_per_motion \
   --output-folder output/g1_leg_repro_full_20260521 \
@@ -316,7 +355,7 @@ conda activate env_isaaclab
 ## Sanity checks already done
 
 - arm default PD and production GRU ran on all 10 arm motions
-- leg default PD and lag10 SysID ran on all 10 leg motions
+- leg stock default PD, SDK-PD-only, and lag10 SysID ran on all 10 leg motions
 - leg GRU smoke and full run completed on the experimental branch
 - raw G1 timestamp normalization is covered by tests
 - Python compile and sim2real-gap tests passed after the benchmark fixes
