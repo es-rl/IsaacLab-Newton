@@ -1,0 +1,40 @@
+# G1 right leg — Fixed-SDK + lag=10, kp=kd=0 variant for GRU.
+
+effort_limit_sim: 139.0
+velocity_limit_sim: 30.0
+stiffness:
+  .*_hip_pitch_joint: 0.0
+  .*_hip_roll_joint: 0.0
+  .*_hip_yaw_joint: 0.0
+  .*_knee_joint: 0.0
+  .*_ankle_pitch_joint: 0.0
+  .*_ankle_roll_joint: 0.0
+damping:
+  .*_hip_pitch_joint: 0.0
+  .*_hip_roll_joint: 0.0
+  .*_hip_yaw_joint: 0.0
+  .*_knee_joint: 0.0
+  .*_ankle_pitch_joint: 0.0
+  .*_ankle_roll_joint: 0.0
+armature:
+  .*_hip_pitch_joint: 0.00169
+  .*_hip_roll_joint: 0.001922
+  .*_hip_yaw_joint: 0.003692
+  .*_knee_joint: 0.0001
+  .*_ankle_pitch_joint: 0.016687
+  .*_ankle_roll_joint: 0.055845
+dynamic_friction:
+  .*_hip_pitch_joint: 0.233931
+  .*_hip_roll_joint: 0.833465
+  .*_hip_yaw_joint: 0.678684
+  .*_knee_joint: 1.510287
+  .*_ankle_pitch_joint: 0.509702
+  .*_ankle_roll_joint: 0.1307
+viscous_friction:
+  .*_hip_pitch_joint: 2.975988
+  .*_hip_roll_joint: 2.92972
+  .*_hip_yaw_joint: 0.458953
+  .*_knee_joint: 0.609828
+  .*_ankle_pitch_joint: 0.164788
+  .*_ankle_roll_joint: 0.2545
+motor_lag_ms: 10.0

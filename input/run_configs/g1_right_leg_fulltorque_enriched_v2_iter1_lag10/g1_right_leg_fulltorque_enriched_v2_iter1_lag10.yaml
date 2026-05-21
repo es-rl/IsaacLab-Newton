@@ -1,0 +1,16 @@
+simulation:
+  physics_freq: 500
+  control_freq: 500
+  render_freq: 500
+  integrator: implicitfast
+  solver_iterations: 10
+  ls_iterations: 10
+actuator:
+  model_type: full_torque_enriched
+  yaml_file: g1/g1_leg_v2_fixedpd_lag10_no_pd.yaml
+  network_file: g1/g1_leg_fulltorque_enriched_warmstart_v2_iter1_lag10_script.pt
+  stats_file: g1/g1_leg_fulltorque_enriched_warmstart_v2_iter1_lag10_stats.json
+  hidden_size: 128
+benchmark:
+  output_folder: output/g1_leg_benchmark_fulltorque_enriched_v2_iter1_lag10
+  real_data_root: input/sysid_data/g1

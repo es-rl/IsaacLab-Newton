@@ -632,6 +632,26 @@ _G1_ARM_JOINT_NAMES = [
 ]
 _G1_ARM_QPOS_INDICES = [25, 26, 27, 28]
 _G1_ARM_DOF_INDICES = [24, 25, 26, 27]
+_G1_LEG_JOINT_NAMES = [
+    "right_hip_pitch_joint",
+    "right_hip_roll_joint",
+    "right_hip_yaw_joint",
+    "right_knee_joint",
+    "right_ankle_pitch_joint",
+    "right_ankle_roll_joint",
+]
+_G1_LEG_QPOS_INDICES = [13, 14, 15, 16, 17, 18]
+_G1_LEG_DOF_INDICES = [12, 13, 14, 15, 16, 17]
+_G1_LEG_KP = [60.0, 60.0, 60.0, 100.0, 40.0, 40.0]
+_G1_LEG_KD = [1.0, 1.0, 1.0, 2.0, 1.0, 1.0]
+_G1_LEG_SYSID_YAML = os.path.join(
+    os.path.dirname(__file__),
+    "../../input/actuator_models/g1/g1_leg_v2_fixedpd_lag10_sysid.yaml",
+)
+_G1_LEG_SYSID_RUN_CFG = os.path.join(
+    os.path.dirname(__file__),
+    "../../input/run_configs/g1_right_leg_v2_fixedpd_lag10_sysid/g1_right_leg_v2_fixedpd_lag10_sysid.yaml",
+)
 
 
 def _load_g1_sysid_mujoco_model():
@@ -667,8 +687,59 @@ def _load_g1_sysid_mujoco_model():
     return mjm
 
 
-def _patch_g1_fulltorque_enriched(actuator, robot, model_path: str, stats_path: str):
-    """Patch the G1 arm actuator with the production 24-feature full-torque GRU.
+def _load_g1_leg_sysid_mujoco_model():
+    """Load the G1 leg SysID MuJoCo model used for leg GRU qfrc_bias."""
+    import mujoco as _mj
+    import yaml as _yaml
+
+    mjm = _mj.MjModel.from_xml_path(_G1_SYSID_MJCF_PATH)
+    mjm.opt.disableflags |= _mj.mjtDisableBit.mjDSBL_CONTACT
+
+    with open(_G1_LEG_SYSID_YAML) as f:
+        sysid = _yaml.safe_load(f) or {}
+
+    key_to_leg_idx = {
+        "hip_pitch": 0,
+        "hip_roll": 1,
+        "hip_yaw": 2,
+        "knee": 3,
+        "ankle_pitch": 4,
+        "ankle_roll": 5,
+    }
+    for key, val in (sysid.get("armature") or {}).items():
+        for pattern, idx in key_to_leg_idx.items():
+            if pattern in key:
+                mjm.dof_armature[_G1_LEG_DOF_INDICES[idx]] = float(val)
+                break
+
+    if os.path.isfile(_G1_LEG_SYSID_RUN_CFG):
+        with open(_G1_LEG_SYSID_RUN_CFG) as f:
+            run_cfg = _yaml.safe_load(f) or {}
+        for body_name, override in (run_cfg.get("mass_overrides") or {}).items():
+            body_id = _mj.mj_name2id(mjm, _mj.mjtObj.mjOBJ_BODY, body_name)
+            if body_id >= 0:
+                mjm.body_mass[body_id] += float(override["delta_mass"])
+
+    return mjm
+
+
+def _patch_g1_fulltorque_enriched(
+    actuator,
+    robot,
+    model_path: str,
+    stats_path: str,
+    *,
+    joint_names: list[str] | None = None,
+    qpos_indices: list[int] | None = None,
+    dof_indices: list[int] | None = None,
+    kp_feature: float | list[float] = 40.0,
+    kd_feature: float | list[float] = 1.0,
+    mj_model_loader=None,
+    hidden_size: int = 128,
+    num_layers: int = 2,
+    label: str = "G1 production full-torque GRU",
+):
+    """Patch a G1 actuator with a full-torque GRU.
 
     Feature order matches the production checkpoint:
     [q, position_error, velocity, SDK_PD_hint, qfrc_bias, previous_torque].
@@ -679,7 +750,11 @@ def _patch_g1_fulltorque_enriched(actuator, robot, model_path: str, stats_path: 
     import mujoco as _mj
 
     device = actuator._device
-    num_joints = len(_G1_ARM_JOINT_NAMES)
+    joint_names = joint_names or _G1_ARM_JOINT_NAMES
+    qpos_indices = qpos_indices or _G1_ARM_QPOS_INDICES
+    dof_indices = dof_indices or _G1_ARM_DOF_INDICES
+    mj_model_loader = mj_model_loader or _load_g1_sysid_mujoco_model
+    num_joints = len(joint_names)
     num_envs = int(actuator._num_envs)
 
     model = torch.jit.load(model_path, map_location=device).eval()
@@ -688,20 +763,30 @@ def _patch_g1_fulltorque_enriched(actuator, robot, model_path: str, stats_path: 
     mean_t = torch.tensor(stats["mean"], dtype=torch.float32, device=device)
     std_t = torch.tensor(stats["std"], dtype=torch.float32, device=device)
 
-    joint_indices = [robot.joint_names.index(jn) for jn in _G1_ARM_JOINT_NAMES]
+    def _gain_tensor(value: float | list[float]):
+        if isinstance(value, (list, tuple)):
+            if len(value) != num_joints:
+                raise ValueError(f"gain length {len(value)} != num_joints {num_joints}")
+            return torch.tensor(value, dtype=torch.float32, device=device).view(1, num_joints)
+        return torch.full((1, num_joints), float(value), dtype=torch.float32, device=device)
+
+    kp_t = _gain_tensor(kp_feature)
+    kd_t = _gain_tensor(kd_feature)
+
+    joint_indices = [robot.joint_names.index(jn) for jn in joint_names]
     actuator_joint_names = list(actuator._joint_names)
-    actuator_local_indices = [actuator_joint_names.index(jn) for jn in _G1_ARM_JOINT_NAMES]
+    actuator_local_indices = [actuator_joint_names.index(jn) for jn in joint_names]
     actuator_global_indices = [robot.joint_names.index(jn) for jn in actuator_joint_names]
     actuator_global_indices_t = torch.tensor(actuator_global_indices, dtype=torch.long, device=device)
 
-    hidden = torch.zeros(2, num_envs, 128, dtype=torch.float32, device=device)
+    hidden = torch.zeros(num_layers, num_envs, hidden_size, dtype=torch.float32, device=device)
     prev_torque = torch.zeros(num_envs, num_joints, dtype=torch.float32, device=device)
-    mj_model = _load_g1_sysid_mujoco_model()
+    mj_model = mj_model_loader()
     mj_data = _mj.MjData(mj_model)
 
     log_message(
-        "G1 production full-torque GRU: "
-        f"joints={_G1_ARM_JOINT_NAMES}, input=24, output=4, mode=GRU replaces PD"
+        f"{label}: "
+        f"joints={joint_names}, input={mean_t.numel()}, output={num_joints}, mode=GRU replaces PD"
     )
 
     def reset_state():
@@ -727,20 +812,20 @@ def _patch_g1_fulltorque_enriched(actuator, robot, model_path: str, stats_path: 
             q_target = q.clone()
 
         pos_error = q_target - q
-        pd_hint = 40.0 * pos_error - v
+        pd_hint = kp_t * pos_error - kd_t * v
 
         q_np = q.detach().cpu().numpy()
         v_np = v.detach().cpu().numpy()
         qfrc_bias_np = np.zeros((num_envs, num_joints), dtype=np.float32)
         for env_id in range(num_envs):
             _mj.mj_resetData(mj_model, mj_data)
-            for k, qi in enumerate(_G1_ARM_QPOS_INDICES):
+            for k, qi in enumerate(qpos_indices):
                 mj_data.qpos[qi] = float(q_np[env_id, k])
-            for k, vi in enumerate(_G1_ARM_DOF_INDICES):
+            for k, vi in enumerate(dof_indices):
                 mj_data.qvel[vi] = float(v_np[env_id, k])
             _mj.mj_fwdPosition(mj_model, mj_data)
             _mj.mj_fwdVelocity(mj_model, mj_data)
-            qfrc_bias_np[env_id, :] = [mj_data.qfrc_bias[vi] for vi in _G1_ARM_DOF_INDICES]
+            qfrc_bias_np[env_id, :] = [mj_data.qfrc_bias[vi] for vi in dof_indices]
         qfrc_bias = torch.from_numpy(qfrc_bias_np).to(device)
 
         feats = torch.cat([q, pos_error, v, pd_hint, qfrc_bias, prev_torque], dim=-1)
@@ -921,6 +1006,7 @@ _G1_LEG_ALIASES = (
     "g1_right_leg",
     "g1_right_leg_default_pd",
     "g1_right_leg_v2_fixedpd_lag10_sysid",
+    "g1_right_leg_fulltorque_enriched_v2_iter1_lag10",
 )
 _ROBOT_LEG_CFG = {}
 for _alias in _G1_LEG_ALIASES:
@@ -939,9 +1025,10 @@ def _build_leg_actuators(run_cfg: dict, robot_name: str) -> dict | None:
 
     model_type = act_cfg.get("model_type", "implicit")
     yaml_file = act_cfg.get("yaml_file")
-    if model_type != "implicit":
+    if model_type not in ("implicit", "full_torque_enriched"):
         raise NotImplementedError(
-            f"Leg benchmark only supports model_type='implicit' in this lean repro, got '{model_type}'."
+            "Leg benchmark only supports model_type='implicit' or "
+            f"'full_torque_enriched' in this lean repro, got '{model_type}'."
         )
     if not yaml_file:
         raise ValueError("actuator.yaml_file required for G1 leg benchmark")
@@ -1649,17 +1736,43 @@ class NewtonJointMotionBenchmark:
                 raise ValueError("full_torque_enriched requires actuator.network_file and actuator.stats_file")
             model_path = os.path.join(_ACTUATOR_MODELS_BASE, network_file)
             stats_path = os.path.join(_ACTUATOR_MODELS_BASE, stats_file)
+            patched_count = 0
             for name, actuator in self.robot.actuators.items():
-                if type(actuator).__name__ == "ImplicitActuator" and (
-                    name in ("arms", "arm") or name.startswith("arms_")
+                if type(actuator).__name__ != "ImplicitActuator":
+                    continue
+                if self.robot_name in _G1_LEG_ALIASES and (
+                    name in ("legs", "leg", "legs_right") or name.startswith("legs_")
                 ):
-                    log_message(f"Patching '{name}' with full_torque_enriched: {os.path.basename(model_path)}")
+                    log_message(f"Patching '{name}' with full_torque_enriched leg GRU: {os.path.basename(model_path)}")
+                    _patch_g1_fulltorque_enriched(
+                        actuator=actuator,
+                        robot=self.robot,
+                        model_path=model_path,
+                        stats_path=stats_path,
+                        joint_names=_G1_LEG_JOINT_NAMES,
+                        qpos_indices=_G1_LEG_QPOS_INDICES,
+                        dof_indices=_G1_LEG_DOF_INDICES,
+                        kp_feature=_G1_LEG_KP,
+                        kd_feature=_G1_LEG_KD,
+                        mj_model_loader=_load_g1_leg_sysid_mujoco_model,
+                        hidden_size=int(act_cfg.get("hidden_size", 128)),
+                        num_layers=int(act_cfg.get("num_layers", 2)),
+                        label="G1 leg full-torque GRU",
+                    )
+                    patched_count += 1
+                elif self.robot_name not in _G1_LEG_ALIASES and (name in ("arms", "arm") or name.startswith("arms_")):
+                    log_message(f"Patching '{name}' with full_torque_enriched arm GRU: {os.path.basename(model_path)}")
                     _patch_g1_fulltorque_enriched(
                         actuator=actuator,
                         robot=self.robot,
                         model_path=model_path,
                         stats_path=stats_path,
                     )
+                    patched_count += 1
+            if patched_count == 0:
+                raise RuntimeError(
+                    f"full_torque_enriched requested for {self.robot_name}, but no matching actuator group was patched"
+                )
 
         # Reset scene state
         self.scene.reset()
