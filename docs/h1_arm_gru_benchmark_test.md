@@ -121,6 +121,12 @@ python scripts/sim2real_gap/run_analysis.py \
   --valid-joints-file scripts/sim2real_gap/configs/h1_arm_v28_lag20_gripperpos_s033_valid_joints.txt
 ```
 
+Generate the comparison plots:
+
+```bash
+python scripts/sim2real_gap/plot_h1_arm_gru_comparison.py
+```
+
 ## Output Artifacts
 
 Benchmark output:
@@ -140,6 +146,26 @@ SAGE plots:
 ```text
 /home/vbhavanantha/IsaacLab-Newton-g1-repro/output/h1_arm_gru_v28_analysis_test10_20260521
 ```
+
+Custom comparison plots, showing real, PD baseline, lag20 SysID, and v28
+PD+GRU on the same axes:
+
+```text
+/home/vbhavanantha/IsaacLab-Newton-g1-repro/output/h1_plots_current/arm_real_pd_lag20sysid_v28gru_labeled/h1_arm_real_pd_lag20sysid_v28gru_labeled_all_motions.pdf
+/home/vbhavanantha/IsaacLab-Newton-g1-repro/output/h1_plots_current/arm_real_pd_lag20sysid_v28gru_labeled/h1_arm_pd_lag20sysid_v28gru_labeled_rmse_summary.png
+/home/vbhavanantha/IsaacLab-Newton-g1-repro/output/h1_plots_current/arm_real_pd_lag20sysid_v28gru_labeled/h1_arm_pd_lag20sysid_v28gru_labeled_plot_metrics.csv
+```
+
+There is also one PNG per motion in:
+
+```text
+/home/vbhavanantha/IsaacLab-Newton-g1-repro/output/h1_plots_current/arm_real_pd_lag20sysid_v28gru_labeled
+```
+
+The plot PDF has 10 pages, one per motion. The trace plots omit commanded
+position and show the scored real-vs-sim position and torque signals. The page
+titles use the SAGE RMSE means for that motion, including the GRU reduction
+relative to PD and the GRU improvement relative to lag20 SysID.
 
 ## Per-Motion Torque RMSE
 
