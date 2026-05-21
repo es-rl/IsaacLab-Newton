@@ -55,6 +55,13 @@ _TESTSTAND_LOCAL_USD = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "../../input/robot_models/teststand/teststand.usda")
 )
 
+# H1 yaw-clamped gripper USD keeps the left shoulder yaw near its mechanical
+# stop. The legacy 19-column command files predate that USD, so left-arm aux
+# replay is skipped for yaw-clamped H1 runs.
+_H1_LEFT_ARM_AUX_SKIP: frozenset[str] = frozenset(
+    {"left_shoulder_pitch", "left_shoulder_roll", "left_shoulder_yaw", "left_elbow"}
+)
+
 # Reuse SAGE's pure-Python utility functions
 from sage.simulation import get_motion_files, get_motion_name, log_message  # noqa: F401
 
@@ -864,7 +871,10 @@ _ACTUATOR_MODELS_BASE = os.path.join(os.path.dirname(__file__), "../../input/act
 # Per-robot arm joint config: joint regex patterns, actuator group name, model subdir
 _ROBOT_ARM_CFG = {
     "h1": {
-        "joint_exprs": [".*_shoulder_pitch", ".*_shoulder_roll", ".*_shoulder_yaw", ".*_elbow"],
+        # H1 arm benchmark aliases are right-arm-only. The scene keeps the left
+        # arm on its own factory-PD actuator so replacing/tuning the right arm
+        # cannot leave the left arm uncontrolled.
+        "joint_exprs": ["right_shoulder_pitch", "right_shoulder_roll", "right_shoulder_yaw", "right_elbow"],
         "group_name": "arms",
         "model_subdir": "h1",
         "cross_joint_map": {
@@ -903,6 +913,14 @@ _G1_ALIASES = (
 )
 for _alias in _G1_ALIASES:
     _ROBOT_ARM_CFG[_alias] = _G1_ARM_CFG
+
+
+_H1_ARM_ALIASES = (
+    "h1_arm_pd_baseline_yawclamped_gripperpos",
+    "h1_arm_lag20_sysid_gripperpos",
+)
+for _alias in _H1_ARM_ALIASES:
+    _ROBOT_ARM_CFG[_alias] = _ROBOT_ARM_CFG["h1"]
 
 
 _G1_LEG_CFG = {
@@ -1099,13 +1117,19 @@ class H1BenchmarkSceneCfg(InteractiveSceneCfg):
             joint_pos={
                 ".*_hip_yaw": 0.0,
                 ".*_hip_roll": 0.0,
-                ".*_hip_pitch": -0.28,
-                ".*_knee": 0.79,
-                ".*_ankle": -0.52,
+                # Fixed-base arm replay: keep lower body in the neutral
+                # arm-benchmark posture instead of H1's crouched locomotion
+                # default, since recorded motions only command the right arm.
+                ".*_hip_pitch": 0.0,
+                ".*_knee": 0.0,
+                ".*_ankle": 0.0,
                 "torso": 0.0,
                 ".*_shoulder_pitch": 0.0,
                 ".*_shoulder_roll": 0.0,
-                ".*_shoulder_yaw": 0.0,
+                # The yaw-clamped H1 gripper USD has right_shoulder_yaw lower
+                # bound near 1.142 rad; initialize inside that range.
+                "left_shoulder_yaw": -1.2,
+                "right_shoulder_yaw": 1.2,
                 ".*_elbow": 0.0,
             },
             joint_vel={".*": 0.0},
@@ -1115,11 +1139,11 @@ class H1BenchmarkSceneCfg(InteractiveSceneCfg):
                 joint_names_expr=[".*_hip_yaw", ".*_hip_roll", ".*_hip_pitch", ".*_knee", "torso"],
                 effort_limit_sim=300,
                 stiffness={
-                    ".*_hip_yaw": 50.0,
-                    ".*_hip_roll": 50.0,
-                    ".*_hip_pitch": 100.0,
-                    ".*_knee": 100.0,
-                    "torso": 100.0,
+                    ".*_hip_yaw": 150.0,
+                    ".*_hip_roll": 150.0,
+                    ".*_hip_pitch": 200.0,
+                    ".*_knee": 200.0,
+                    "torso": 200.0,
                 },
                 damping={
                     ".*_hip_yaw": 5.0,
@@ -1131,15 +1155,21 @@ class H1BenchmarkSceneCfg(InteractiveSceneCfg):
             ),
             "feet": ImplicitActuatorCfg(
                 joint_names_expr=[".*_ankle"],
-                effort_limit_sim=100,
+                effort_limit_sim=20,
                 stiffness={".*_ankle": 20.0},
-                damping={".*_ankle": 4.0},
+                damping={".*_ankle": 2.0},
             ),
             # -----------------------------------------------------------------------------
-            # Implicit actuator with real H1 motor params (from YAML)
+            # Keep the unscored left arm on factory PD while the right-arm group
+            # below is replaced by benchmark run configs.
+            "left_arm": load_implicit_actuator_cfg(
+                "h1/h1_arm_implicit.yaml",
+                ["left_shoulder_pitch", "left_shoulder_roll", "left_shoulder_yaw", "left_elbow"],
+            ),
+            # Implicit actuator with real H1 motor params (from YAML), right arm only.
             "arms": load_implicit_actuator_cfg(
                 "h1/h1_arm_implicit.yaml",
-                [".*_shoulder_pitch", ".*_shoulder_roll", ".*_shoulder_yaw", ".*_elbow"],
+                ["right_shoulder_pitch", "right_shoulder_roll", "right_shoulder_yaw", "right_elbow"],
             ),
             # -----------------------------------------------------------------------------
             # DC motor with velocity-dependent torque saturation (from YAML):
@@ -1408,6 +1438,8 @@ _BENCHMARK_ROBOT_CONFIGS = {
 }
 for _alias in _G1_ALIASES:
     _BENCHMARK_ROBOT_CONFIGS[_alias] = _G1_BENCHMARK_CFG
+for _alias in _H1_ARM_ALIASES:
+    _BENCHMARK_ROBOT_CONFIGS[_alias] = _BENCHMARK_ROBOT_CONFIGS["h1"]
 
 _G1_LEG_BENCHMARK_CFG = {
     "scene_cfg_cls": G1BenchmarkSceneCfg,
@@ -1445,6 +1477,10 @@ class NewtonJointMotionBenchmark:
         self.render_freq = args.render_freq
         self.original_control_freq = args.original_control_freq
         self.control_freq = args.control_freq or self.physics_freq
+        self._h1_fullbody_command_root = getattr(args, "h1_fullbody_command_root", None)
+        if self._h1_fullbody_command_root:
+            self._h1_fullbody_command_root = os.path.abspath(os.path.expanduser(self._h1_fullbody_command_root))
+        self._h1_fullbody_command_rate_hz = float(getattr(args, "h1_fullbody_command_rate_hz", None) or 50.0)
         self.kp = args.kp
         self.kd = args.kd
         self.record_video = args.record_video
@@ -1486,6 +1522,12 @@ class NewtonJointMotionBenchmark:
         self.divisor = self.render_freq // self.control_freq
 
         self.motor_lag_steps = round(self.motor_lag_ms / 1000.0 / self.physics_dt)
+        usd_path_override = self._run_cfg.get("simulation", {}).get("usd_path")
+        if usd_path_override is not None:
+            usd_path_override = os.path.abspath(os.path.expanduser(usd_path_override))
+            if not os.path.isfile(usd_path_override):
+                raise FileNotFoundError(f"simulation.usd_path file not found: {usd_path_override}")
+        self._usd_path_override = usd_path_override
 
         self.set_valid_joints = False
         self.valid_joint_names = []
@@ -1580,6 +1622,12 @@ class NewtonJointMotionBenchmark:
         # Only applies to H1 — UR10e base is inherently fixed (bolted to table).
         if not self.fix_root and self.robot_name == "h1":
             scene_cfg.robot = scene_cfg.robot.replace(spawn=H1_MINIMAL_CFG.spawn.replace(usd_path=_H1_LOCAL_USD))
+
+        if self._usd_path_override is not None:
+            scene_cfg.robot = scene_cfg.robot.replace(
+                spawn=scene_cfg.robot.spawn.replace(usd_path=self._usd_path_override)
+            )
+            log_message(f"USD path overridden: {self._usd_path_override}")
 
         # Create the scene (spawns all entities)
         self.scene = InteractiveScene(scene_cfg)
@@ -2029,6 +2077,82 @@ class NewtonJointMotionBenchmark:
 
         return joint_angles, self.joint_names
 
+    def _resolve_h1_fullbody_command_file(self, motion_name: str) -> str | None:
+        """Resolve legacy H1 19-column command file for a scored arm motion."""
+        if not self._h1_fullbody_command_root or not self.robot_name.startswith("h1_arm_"):
+            return None
+
+        prefix = motion_name.split("_", 1)[0]
+        candidates = []
+        if prefix.startswith("C"):
+            candidates.append(f"{prefix}_chirp.txt")
+        elif prefix.startswith("S"):
+            candidates.append(f"{prefix}_sine.txt")
+        candidates.extend([f"{motion_name}.txt", f"{motion_name}.csv"])
+
+        for name in candidates:
+            path = os.path.join(self._h1_fullbody_command_root, name)
+            if os.path.isfile(path):
+                return path
+
+        log_message(
+            f"H1 full-body command root set, but no command file found for {motion_name} "
+            f"under {self._h1_fullbody_command_root}"
+        )
+        return None
+
+    def _load_h1_fullbody_aux_motion(self, motion_name: str, num_steps: int):
+        """Load/resample non-scored H1 body commands for this motion.
+
+        Returns ``(aux_angles, aux_joint_indices, aux_joint_names)``. Scored
+        right-arm joints are excluded, so the converted motor logs remain the
+        source of truth for commands and metrics.
+        """
+        path = self._resolve_h1_fullbody_command_file(motion_name)
+        if path is None:
+            return None
+
+        with open(path) as f:
+            reader = csv.reader(f)
+            header = [h.strip() for h in next(reader)]
+            rows = [[float(x.strip()) for x in row] for row in reader if row]
+        if not rows:
+            log_message(f"H1 full-body command file is empty: {path}")
+            return None
+
+        scored = set(self.joint_names)
+        usd_path_str = str(self._usd_path_override or "")
+        skip_left_arm = "yawclamped" in usd_path_str.lower()
+        aux_cols = []
+        aux_names = []
+        aux_indices = []
+        for col, name in enumerate(header):
+            if name in scored:
+                continue
+            if name not in self._joint_name_to_idx:
+                continue
+            if skip_left_arm and name in _H1_LEFT_ARM_AUX_SKIP:
+                continue
+            aux_cols.append(col)
+            aux_names.append(name)
+            aux_indices.append(self._joint_name_to_idx[name])
+
+        if not aux_cols:
+            return None
+
+        arr = np.asarray(rows, dtype=np.float64)[:, aux_cols]
+        old_times = np.arange(arr.shape[0], dtype=np.float64) / self._h1_fullbody_command_rate_hz
+        new_times = np.arange(num_steps, dtype=np.float64) / self.control_freq
+        aux = np.empty((num_steps, arr.shape[1]), dtype=np.float64)
+        for j in range(arr.shape[1]):
+            aux[:, j] = np.interp(new_times, old_times, arr[:, j], left=arr[0, j], right=arr[-1, j])
+
+        log_message(
+            f"H1 full-body aux commands: {motion_name} <- {os.path.basename(path)} "
+            f"({len(aux_names)} non-scored joints)"
+        )
+        return aux, torch.tensor(aux_indices, dtype=torch.long, device=self.robot.device), aux_names
+
     def _init_logger(self):
         """Create output directory and CSV files in SAGE-compatible format."""
         self.sim_output_folder = os.path.join(
@@ -2093,6 +2217,14 @@ class NewtonJointMotionBenchmark:
         joint_angles, _ = self._load_motion()
         num_steps = len(joint_angles[0])
         num_joints = len(self.joint_names)
+        aux_motion = self._load_h1_fullbody_aux_motion(self.motion_name, num_steps)
+        if aux_motion is not None:
+            aux_angles_arr, aux_joint_indices, _aux_names = aux_motion
+            aux_joint_indices_cpu = aux_joint_indices.cpu()
+        else:
+            aux_angles_arr = None
+            aux_joint_indices = None
+            aux_joint_indices_cpu = None
 
         log_message(f"Loading motion data from {self.motion_file}...")
         log_message(f"Physics dt: {self.physics_dt}, Control dt: {self.control_dt}, Divisor: {self.divisor}")
@@ -2110,6 +2242,9 @@ class NewtonJointMotionBenchmark:
         joint_pos = self._to_torch(self.robot.data.joint_pos)
         initial_pos = joint_pos[0, self.joint_indices].cpu().numpy()
         motion_start_pos = np.array([joint_angles[j][0] for j in range(num_joints)])
+        if aux_angles_arr is not None:
+            initial_aux_pos = joint_pos[0, aux_joint_indices].cpu().numpy()
+            aux_start_pos = aux_angles_arr[0]
 
         total_steps = buffer_control_steps * self.divisor + num_steps * self.divisor
         pbar = tqdm(
@@ -2129,6 +2264,11 @@ class NewtonJointMotionBenchmark:
                 joint_pos = self._to_torch(self.robot.data.joint_pos)
                 target = joint_pos.clone()
                 target[0, self.joint_indices] = torch.tensor(interp_pos, dtype=torch.float32, device=self.robot.device)
+                if aux_angles_arr is not None:
+                    interp_aux = (1 - alpha) * initial_aux_pos + alpha * aux_start_pos
+                    target[0, aux_joint_indices] = torch.tensor(
+                        interp_aux, dtype=torch.float32, device=self.robot.device
+                    )
                 self.robot.set_joint_position_target(target)
 
             self._sim_step()
@@ -2143,6 +2283,10 @@ class NewtonJointMotionBenchmark:
             pose_tensor = torch.tensor(init_pose, dtype=full_pos.dtype, device=self.robot.device)
             if pose_tensor.numel() == self.joint_indices.numel():
                 full_pos[0, self.joint_indices] = pose_tensor
+                if aux_angles_arr is not None:
+                    full_pos[0, aux_joint_indices] = torch.tensor(
+                        aux_start_pos, dtype=full_pos.dtype, device=self.robot.device
+                    )
                 init_vel = self._real_init_vel.get(self.motion_name)
                 if init_vel is not None:
                     vel_tensor = torch.tensor(init_vel, dtype=full_vel.dtype, device=self.robot.device)
@@ -2202,6 +2346,10 @@ class NewtonJointMotionBenchmark:
                 target_tensor.copy_(joint_pos)
                 for j_idx, art_idx in enumerate(joint_indices_cpu):
                     target_tensor[0, art_idx] = delayed_cmd[j_idx]
+                if aux_angles_arr is not None:
+                    aux_cmd = aux_angles_arr[index]
+                    for j_idx, art_idx in enumerate(aux_joint_indices_cpu):
+                        target_tensor[0, art_idx] = aux_cmd[j_idx]
                 self.robot.set_joint_position_target(target_tensor)
 
             self._sim_step()
@@ -2252,6 +2400,9 @@ class NewtonJointMotionBenchmark:
         num_joints = len(self.joint_names)
 
         all_angles = []  # list of (num_steps,num_joints) arrays
+        all_aux_angles = []  # optional list of (num_steps,num_aux_joints) arrays
+        aux_joint_indices = None
+        aux_joint_indices_cpu = None
         all_names = []
         per_env_loggers = []  # list of (sim_output_folder, control_file, dof_file)
 
@@ -2266,6 +2417,16 @@ class NewtonJointMotionBenchmark:
             )
             all_angles.append(arr)
             all_names.append(motion_name)
+
+            aux_motion = self._load_h1_fullbody_aux_motion(motion_name, n_steps)
+            if aux_motion is not None:
+                aux_arr, aux_indices, _aux_names = aux_motion
+                if aux_joint_indices is None:
+                    aux_joint_indices = aux_indices
+                    aux_joint_indices_cpu = aux_joint_indices.cpu()
+                all_aux_angles.append(aux_arr)
+            else:
+                all_aux_angles.append(None)
 
             # Set up per-env output directory
             self._init_logger()
@@ -2289,6 +2450,19 @@ class NewtonJointMotionBenchmark:
             if arr.shape[0] < max_steps:
                 padded[i, arr.shape[0] :] = arr[-1]
 
+        use_aux_commands = aux_joint_indices is not None and all(a is not None for a in all_aux_angles)
+        if aux_joint_indices is not None and not use_aux_commands:
+            log_message("WARNING: disabling H1 full-body aux commands because at least one motion is missing aux data")
+        if use_aux_commands:
+            num_aux_joints = all_aux_angles[0].shape[1]
+            padded_aux = np.zeros((n_envs, max_steps, num_aux_joints), dtype=np.float64)
+            for i, arr in enumerate(all_aux_angles):
+                padded_aux[i, : arr.shape[0]] = arr
+                if arr.shape[0] < max_steps:
+                    padded_aux[i, arr.shape[0] :] = arr[-1]
+        else:
+            padded_aux = None
+
         log_message(f"Batched {n_envs} motions (max {max_steps} steps, {num_joints} joints)")
         for i, (mlen, mname) in enumerate(zip(motion_lengths, all_names)):
             log_message(f"  env {i}: {mname} ({mlen} steps)")
@@ -2304,6 +2478,9 @@ class NewtonJointMotionBenchmark:
         joint_pos_all = self._to_torch(self.robot.data.joint_pos)  # (n_envs, n_robot_joints)
         initial_pos = joint_pos_all[:, self.joint_indices].cpu().numpy()  # (n_envs, num_joints)
         motion_start_pos = padded[:, 0, :]  # (n_envs, num_joints)
+        if use_aux_commands:
+            initial_aux_pos = joint_pos_all[:, aux_joint_indices].cpu().numpy()
+            aux_start_pos = padded_aux[:, 0, :]
 
         total_steps = buffer_control_steps * self.divisor + max_steps * self.divisor
         pbar = tqdm(
@@ -2327,12 +2504,55 @@ class NewtonJointMotionBenchmark:
                     target[:, art_idx] = torch.tensor(
                         interp_pos[:, j_idx], dtype=torch.float32, device=self.robot.device
                     )
+                if use_aux_commands:
+                    interp_aux = (1 - alpha) * initial_aux_pos + alpha * aux_start_pos
+                    for j_idx, art_idx in enumerate(aux_joint_indices):
+                        target[:, art_idx] = torch.tensor(
+                            interp_aux[:, j_idx], dtype=torch.float32, device=self.robot.device
+                        )
                 self.robot.set_joint_position_target(target)
 
             self._sim_step()
             pbar.update(1)
 
         buffer_end_time = self._sim_time
+
+        if self._real_init_pose:
+            full_pos = self._to_torch(self.robot.data.joint_pos).clone()
+            full_vel = torch.zeros_like(full_pos)
+            teleport_count = 0
+            vel_sync_count = 0
+            for env_idx, mname in enumerate(all_names):
+                pose = self._real_init_pose.get(mname)
+                if pose is None:
+                    continue
+                pose_t = torch.tensor(pose, dtype=full_pos.dtype, device=self.robot.device)
+                if pose_t.numel() != self.joint_indices.numel():
+                    tqdm.write(
+                        f"[Benchmark] WARNING: env {env_idx} ({mname}): init pose has "
+                        f"{pose_t.numel()} joints but benchmark tracks "
+                        f"{self.joint_indices.numel()}; skipping teleport for this env"
+                    )
+                    continue
+                full_pos[env_idx, self.joint_indices] = pose_t
+                if use_aux_commands:
+                    full_pos[env_idx, aux_joint_indices] = torch.tensor(
+                        aux_start_pos[env_idx], dtype=full_pos.dtype, device=self.robot.device
+                    )
+                vel = self._real_init_vel.get(mname)
+                if vel is not None:
+                    vel_t = torch.tensor(vel, dtype=full_vel.dtype, device=self.robot.device)
+                    if vel_t.numel() == self.joint_indices.numel():
+                        full_vel[env_idx, self.joint_indices] = vel_t
+                        vel_sync_count += 1
+                teleport_count += 1
+            if teleport_count > 0:
+                self.robot.write_joint_state_to_sim(full_pos, full_vel)
+                tqdm.write(
+                    f"[Benchmark] Init-pose sync: teleported {teleport_count}/{n_envs} envs to real first recorded pose"
+                    f" (init vel synced for {vel_sync_count})"
+                )
+
         tqdm.write(f"[Benchmark] Buffer done. Running {n_envs} motions in parallel...")
 
         # Command delay buffers (per-env)
@@ -2374,6 +2594,12 @@ class NewtonJointMotionBenchmark:
                     target_tensor[:, art_idx] = torch.tensor(
                         delayed_cmds[:, j_idx], dtype=torch.float32, device=self.robot.device
                     )
+                if use_aux_commands:
+                    aux_cmds = padded_aux[:, index, :]
+                    for j_idx, art_idx in enumerate(aux_joint_indices_cpu):
+                        target_tensor[:, art_idx] = torch.tensor(
+                            aux_cmds[:, j_idx], dtype=torch.float32, device=self.robot.device
+                        )
                 self.robot.set_joint_position_target(target_tensor)
 
             self._sim_step()

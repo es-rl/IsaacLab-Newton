@@ -1,0 +1,28 @@
+# H1 arm SysID: post-bug-fix CMA-ES on multijoint_gripper/train.
+# Factory SDK gains are locked at kp=60, kd=1.5. This variant uses 20 ms
+# command lag and is the lean SysID-only H1 arm benchmark candidate.
+
+effort_limit_sim: 25.0
+velocity_limit_sim: 13.5
+
+stiffness: 60
+damping: 1.5
+motor_lag_ms: 20
+
+armature:
+  ".*_shoulder_pitch": 0.017208
+  ".*_shoulder_roll": 0.007855
+  ".*_shoulder_yaw": 0.033654
+  ".*_elbow": 0.029008
+
+dynamic_friction:
+  ".*_shoulder_pitch": 0.938777
+  ".*_shoulder_roll": 1.189435
+  ".*_shoulder_yaw": 0.280635
+  ".*_elbow": 0.162190
+
+viscous_friction:
+  ".*_shoulder_pitch": 0.406320
+  ".*_shoulder_roll": 0.130234
+  ".*_shoulder_yaw": 0.295161
+  ".*_elbow": 0.049540

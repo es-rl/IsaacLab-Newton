@@ -83,6 +83,22 @@ parser.add_argument(
     action="store_true",
     help="Teleport scored joints to row 0 of real state_motor.csv after buffer warm-up.",
 )
+parser.add_argument(
+    "--h1-fullbody-command-root",
+    type=str,
+    default=None,
+    help=(
+        "Optional directory of 19-column H1 command motion files. H1 arm benchmarks "
+        "use these files to command non-scored body joints while scoring/logging only "
+        "the requested right-arm joints."
+    ),
+)
+parser.add_argument(
+    "--h1-fullbody-command-rate-hz",
+    type=float,
+    default=None,
+    help="Sample rate of --h1-fullbody-command-root files. Default: 50 Hz.",
+)
 parser.add_argument("--record-video", action="store_true", help="Record video")
 
 # Add AppLauncher args (--headless, --device, etc.)
@@ -117,6 +133,8 @@ for _attr, _section in [
     ("original_control_freq", _bench_cfg),
     ("motion_name", _bench_cfg),
     ("output_folder", _bench_cfg),
+    ("h1_fullbody_command_root", _bench_cfg),
+    ("h1_fullbody_command_rate_hz", _bench_cfg),
 ]:
     if getattr(args, _attr) is None and _attr in _section:
         setattr(args, _attr, _section[_attr])
@@ -215,7 +233,16 @@ def _write_run_summary(output_folder, robot_name, motion_source, run_cfg, args):
     }
 
     # Record CLI overrides that differ from config defaults
-    for attr in ("kp", "kd", "motor_lag_ms", "physics_freq", "render_freq", "control_freq"):
+    for attr in (
+        "kp",
+        "kd",
+        "motor_lag_ms",
+        "physics_freq",
+        "render_freq",
+        "control_freq",
+        "h1_fullbody_command_root",
+        "h1_fullbody_command_rate_hz",
+    ):
         val = getattr(args, attr, None)
         if val is not None:
             summary["cli_overrides"][attr] = val

@@ -22,6 +22,7 @@ Usage (CLI override):
 """
 
 import argparse
+import filecmp
 import os
 import re
 import shutil
@@ -29,6 +30,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import sage.analysis as _sim2real_analysis
 from sage.analysis import RobotDataComparator
 
@@ -69,20 +71,59 @@ _LOCAL_CONFIGS_DIR = os.path.join(os.path.dirname(__file__), "configs")
 _SAGE_CONFIGS_DIR = str(Path(_sim2real_analysis.__file__).parent.parent / "configs")
 
 
-def _ensure_sage_joints_config(robot_name):
-    """Copy <robot_name>_joints.yaml into SAGE's configs/ if not already present."""
-    sage_yaml = os.path.join(_SAGE_CONFIGS_DIR, f"{robot_name}_joints.yaml")
-    if os.path.isfile(sage_yaml):
-        return
+def _load_robot_data_microsecond_safe(self, data_types):
+    """Load SAGE robot data while treating benchmark timestamps consistently.
 
+    Some benchmark CSVs are written with microsecond timestamps while upstream
+    SAGE assumes seconds. Convert any large timestamp stream to seconds before
+    computing the shared analysis window.
+    """
+    robot_data = {}
+    initial_time = float("inf")
+
+    for data_type in data_types:
+        data = pd.read_csv(f"{self.file_path}/{data_type}.csv")
+        if data["timestamp"].max() > 1000:
+            data["timestamp"] = data["timestamp"] / 1e6
+
+        initial_time = min(initial_time, data["timestamp"][0])
+        robot_data[data_type] = data
+
+    for data in robot_data.values():
+        data["time_since_zero"] = data["timestamp"] - initial_time
+        data["time_since_last"] = data["timestamp"].diff()
+
+    dof_command = self._process_dof_data(robot_data["control"], self.joint_list, ["positions"], self.use_radians)
+    dof_state = self._process_dof_data(
+        robot_data["state_motor"], self.joint_list, ["positions", "velocities", "torques"], self.use_radians
+    )
+
+    return {"raw_data": robot_data, "dof_command": dof_command, "dof_state": dof_state}
+
+
+_sim2real_analysis.RobotDataProcessor._load_robot_data = _load_robot_data_microsecond_safe
+
+
+def _ensure_sage_joints_config(robot_name):
+    """Copy <robot_name>_joints.yaml into SAGE's configs/.
+
+    SAGE loads joint lists from its installed package directory. Refresh the
+    installed copy when our local config changes so stale joint ordering cannot
+    silently corrupt RMSE calculations.
+    """
+    sage_yaml = os.path.join(_SAGE_CONFIGS_DIR, f"{robot_name}_joints.yaml")
     local_yaml = os.path.join(_LOCAL_CONFIGS_DIR, f"{robot_name}_joints.yaml")
     if not os.path.isfile(local_yaml):
         print(f"[Analysis] WARNING: No joints config for '{robot_name}' in {_LOCAL_CONFIGS_DIR}")
         return
 
+    if os.path.isfile(sage_yaml) and filecmp.cmp(local_yaml, sage_yaml, shallow=False):
+        return
+
     os.makedirs(_SAGE_CONFIGS_DIR, exist_ok=True)
+    action = "Updated" if os.path.isfile(sage_yaml) else "Installed"
     shutil.copy2(local_yaml, sage_yaml)
-    print(f"[Analysis] Installed {robot_name}_joints.yaml -> {sage_yaml}")
+    print(f"[Analysis] {action} {robot_name}_joints.yaml -> {sage_yaml}")
 
 
 def _resolve_joint_param(param_value, joint_name):

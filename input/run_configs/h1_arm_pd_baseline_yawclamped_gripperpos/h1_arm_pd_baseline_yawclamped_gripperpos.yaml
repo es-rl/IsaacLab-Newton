@@ -1,0 +1,31 @@
+# H1 right-arm PD baseline with the yaw-clamped gripper-position USD.
+
+simulation:
+  physics_freq: 200
+  control_freq: 200
+  render_freq: 200
+  integrator: implicitfast
+  solver_iterations: 10
+  ls_iterations: 10
+  usd_path: /home/vbhavanantha/h1_groundtruth_assets/h1_gripper_groundtruth_yawclamped_gripperpos.usd
+
+benchmark:
+  fix_root: true
+  buffer_time: 2.0
+  motor_lag_ms: null
+  kp: null
+  kd: null
+  motion_files: input/sysid_data/h1/multijoint_gripper/test
+  original_control_freq: null
+  motion_name: multijoint_gripper_test10
+  output_folder: output/h1_arm_repro_test10_20260521
+  h1_fullbody_command_root: ~/chiplog/Tools/Postprocess/motion_files
+  h1_fullbody_command_rate_hz: 50.0
+
+analysis:
+  output_dir: output/h1_arm_repro_analysis_pd_test10_20260521
+  sample_dt: 0.005
+
+actuator:
+  model_type: implicit
+  yaml_file: h1/h1_arm_implicit.yaml
