@@ -235,18 +235,19 @@ different question and should not be mixed with the primary per-motion RMSE.
 Fresh plots from the same current clean benchmark outputs:
 
 ```text
-/home/vbhavanantha/IsaacLab-Newton-g1-repro/output/g1_plots_current/arm_command_real_defaultpd_prodgru/g1_arm_command_real_defaultpd_prodgru_all_motions.pdf
-/home/vbhavanantha/IsaacLab-Newton-g1-repro/output/g1_plots_current/arm_command_real_defaultpd_prodgru/g1_arm_defaultpd_vs_prodgru_rmse_summary.png
+/home/vbhavanantha/IsaacLab-Newton-g1-repro/output/g1_plots_current/arm_real_defaultpd_prodgru_labeled/g1_arm_real_defaultpd_prodgru_labeled_all_motions.pdf
+/home/vbhavanantha/IsaacLab-Newton-g1-repro/output/g1_plots_current/arm_real_defaultpd_prodgru_labeled/g1_arm_defaultpd_prodgru_labeled_rmse_summary.png
 /home/vbhavanantha/IsaacLab-Newton-g1-repro/output/g1_plots_current/leg_real_stockpd_sdkpd_lag10sysid_labeled/g1_leg_real_stockpd_sdkpd_lag10sysid_labeled_all_motions.pdf
 /home/vbhavanantha/IsaacLab-Newton-g1-repro/output/g1_plots_current/leg_real_stockpd_sdkpd_lag10sysid_labeled/g1_leg_stockpd_sdkpd_lag10sysid_labeled_rmse_summary.png
 ```
 
-The arm trace plots show command, real, default PD, and production GRU. The leg
-trace plots intentionally omit command position and show real, stock IsaacLab
-PD, SDK-PD-only, and lag10 SysID; this keeps the leg figure focused on the
-scored real-vs-sim comparison while showing the controller-gain caveat. The leg
-plots label each trace by joint name and show the per-motion RMSE reduction of
-lag10 SysID relative to SDK-PD-only.
+The final arm trace plots intentionally omit command position and show real,
+default PD, and production GRU. The final leg trace plots also omit command
+position and show real, stock IsaacLab PD, SDK-PD-only, and lag10 SysID. This
+keeps both figures focused on the scored real-vs-sim comparison while the leg
+figure still shows the controller-gain caveat. Both plot sets label each trace
+by joint name and show the per-motion RMSE reduction of the best model relative
+to the relevant baseline.
 
 The plot script interpolates sim traces onto the real timeline for display and
 per-motion plot labels. Because of that interpolation detail, the plot
