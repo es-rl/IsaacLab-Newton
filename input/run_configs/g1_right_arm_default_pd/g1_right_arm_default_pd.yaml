@@ -1,0 +1,23 @@
+# Copyright (c) 2022-2026, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
+# G1 right-arm benchmark with default PD gains (SDK: kp=40, kd=1).
+# Baseline to compare SysID and GRU models against.
+
+simulation:
+  physics_freq: 500
+  control_freq: 500
+  render_freq: 500
+  integrator: implicitfast
+  solver_iterations: 10
+  ls_iterations: 10
+
+actuator:
+  model_type: implicit
+  yaml_file: g1/g1_arm_implicit.yaml
+
+benchmark:
+  output_folder: output/g1_benchmark_default_pd
+  real_data_root: input/sysid_data/g1

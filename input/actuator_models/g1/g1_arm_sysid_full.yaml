@@ -1,0 +1,28 @@
+# G1 right arm — Full joint SysID (mass + armature + friction jointly optimized)
+# Torque-weighted CMA-ES (80% torque + 20% position), kp=40/kd=1 fixed.
+# Best blended MSE: 0.313 (60 gen, multijoint_all data)
+# Date: 2026-04-14
+
+effort_limit_sim: 25.0
+velocity_limit_sim: 30.0
+
+stiffness: 40.0
+damping: 1.0
+
+armature:
+  ".*_shoulder_pitch_joint": 0.00175
+  ".*_shoulder_roll_joint": 0.01930
+  ".*_shoulder_yaw_joint": 0.01540
+  ".*_elbow_pitch_joint": 0.00075
+
+dynamic_friction:
+  ".*_shoulder_pitch_joint": 0.304
+  ".*_shoulder_roll_joint": 0.377
+  ".*_shoulder_yaw_joint": 0.255
+  ".*_elbow_pitch_joint": 0.522
+
+viscous_friction:
+  ".*_shoulder_pitch_joint": 0.583
+  ".*_shoulder_roll_joint": 1.020
+  ".*_shoulder_yaw_joint": 0.114
+  ".*_elbow_pitch_joint": 0.252

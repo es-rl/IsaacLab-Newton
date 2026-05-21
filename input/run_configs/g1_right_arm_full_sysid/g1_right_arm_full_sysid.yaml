@@ -1,0 +1,37 @@
+# G1 right-arm benchmark: Full joint SysID (mass+armature+friction jointly optimized).
+# CMA-ES torque-weighted, kp=40/kd=1 fixed, masses optimized directly (not GRU-extracted).
+
+simulation:
+  physics_freq: 500
+  control_freq: 500
+  render_freq: 500
+  integrator: implicitfast
+  solver_iterations: 10
+  ls_iterations: 10
+
+actuator:
+  model_type: implicit
+  yaml_file: g1/g1_arm_sysid_full.yaml
+
+# Mass overrides from CMA-ES optimization (URDF -> optimized)
+# pitch: 0.718 -> 0.618 (delta -0.100)
+# roll:  0.643 -> 0.493 (delta -0.150)
+# yaw:   0.734 -> 0.322 (delta -0.412)
+# elbow: 0.601 -> 1.682 (delta +1.081)
+mass_overrides:
+  right_shoulder_pitch_link:
+    body_index: 31
+    delta_mass: -0.100
+  right_shoulder_roll_link:
+    body_index: 32
+    delta_mass: -0.150
+  right_shoulder_yaw_link:
+    body_index: 33
+    delta_mass: -0.412
+  right_elbow_link:
+    body_index: 34
+    delta_mass: 1.081
+
+benchmark:
+  output_folder: output/g1_benchmark_full_sysid
+  real_data_root: input/sysid_data/g1
