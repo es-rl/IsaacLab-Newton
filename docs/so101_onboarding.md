@@ -28,6 +28,38 @@ cd IsaacLab-Newton
 git checkout vbhavanantha/so101-balanced-sysid
 ```
 
+This branch is not a standalone installer. If this is a first-time
+IsaacLab-Newton machine, set up the IsaacLab-Newton stack first, then run the
+SO-101 smoke workflow.
+
+Minimum assumptions for a new machine:
+
+- Ubuntu/Linux workstation with an NVIDIA GPU and working NVIDIA drivers.
+- Git LFS installed, because robot USDs/meshes may be stored as LFS objects.
+- Either Docker support for the repo's Docker workflow, or a local Isaac
+  Lab/Isaac Sim Python environment.
+
+After cloning:
+
+```bash
+sudo apt install git-lfs
+git lfs install
+git lfs pull
+```
+
+The repo README has the canonical install path. For a new user, the simplest
+route is usually the Docker workflow:
+
+```bash
+./docker/build-docker.sh
+./docker/run-gui.sh
+```
+
+Then run the SO-101 commands from inside the container. If using a local conda
+or venv install instead of Docker, first follow the IsaacLab-Newton/Isaac Lab
+installation instructions in the repo README, verify `./isaaclab.sh` works, and
+then continue with this document.
+
 On Vaibhav's machine the working checkout is:
 
 ```text
