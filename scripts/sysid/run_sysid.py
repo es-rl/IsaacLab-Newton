@@ -37,6 +37,7 @@ Usage (UR10e all-joints CSV):
 
 import argparse
 import glob
+import json
 import os
 import sys
 import time
@@ -76,6 +77,40 @@ parser.add_argument(
     help="Directory with control.csv + state_motor.csv + joint_list.txt (all-joints mode).",
 )
 parser.add_argument(
+    "--balanced-real-data-root",
+    type=str,
+    default=None,
+    help=(
+        "Parent directory containing per-motion SAGE folders. When set, "
+        "CMA-ES resets the sim for each motion and scores the mean of per-motion MSEs."
+    ),
+)
+parser.add_argument(
+    "--balanced-manifest",
+    type=str,
+    default=None,
+    help="Optional split_manifest.json for --balanced-real-data-root.",
+)
+parser.add_argument(
+    "--balanced-split",
+    type=str,
+    default="train",
+    choices=["train", "val", "all"],
+    help="Manifest split to use with --balanced-real-data-root (default: train).",
+)
+parser.add_argument(
+    "--balanced-motion-names",
+    type=str,
+    default=None,
+    help="Comma-separated per-motion folder names to use instead of manifest discovery.",
+)
+parser.add_argument(
+    "--balanced-max-motions",
+    type=int,
+    default=None,
+    help="Limit number of balanced per-motion folders loaded (useful for smoke tests).",
+)
+parser.add_argument(
     "--joint-name",
     type=str,
     default="left_elbow",
@@ -100,6 +135,15 @@ parser.add_argument(
     default=None,
     help="Path to parameter bounds YAML (default: auto from --robot-name)",
 )
+parser.add_argument(
+    "--actuator-yaml",
+    type=str,
+    default=None,
+    help=(
+        "Actuator YAML used to build the sim actuator (default: robot config). "
+        "May be absolute or relative to input/actuator_models/."
+    ),
+)
 
 # --- Simulation ---
 parser.add_argument("--output-dir", type=str, default=None, help="Output directory (default: auto from --robot-name)")
@@ -119,7 +163,7 @@ from run_configs import load_run_cfg
 
 # Pre-sim imports (data loading does not need SimulationApp).
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from data_loading import load_real_data  # noqa: E402
+from data_loading import load_real_data, load_real_data_timestamp_aligned  # noqa: E402
 
 _run_cfg = load_run_cfg(args.robot_name)
 _sim_cfg = _run_cfg.get("simulation", {})
@@ -295,6 +339,10 @@ _SO101_USD_PATH = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..", "input", "robot_models", "so101", "so101.usd")
 )
 
+_SO101_ACTUATOR_YAML = args.actuator_yaml or _run_cfg.get("actuator", {}).get(
+    "yaml_file", "so101/so101_implicit.yaml"
+)
+
 
 @configclass
 class Ur10eSysidSceneCfg(InteractiveSceneCfg):
@@ -365,7 +413,7 @@ class So101SysidSceneCfg(InteractiveSceneCfg):
         ),
         actuators={
             "all": load_implicit_actuator_cfg(
-                "so101/so101_implicit.yaml",
+                _SO101_ACTUATOR_YAML,
                 [".*"],
             ),
         },
@@ -425,7 +473,7 @@ _ROBOT_CONFIGS = {
     "so101": {
         "scene_cfg_cls": So101SysidSceneCfg,
         "joint_names": SO101_JOINT_NAMES,
-        "actuator_yaml": "so101/so101_implicit.yaml",
+        "actuator_yaml": _SO101_ACTUATOR_YAML,
     },
 }
 
@@ -554,6 +602,67 @@ def auto_convert_motor_csvs(data_dir: str, output_dir: str) -> str:
     return converted_dir
 
 
+def _is_sage_motion_dir(path: str) -> bool:
+    return (
+        os.path.isdir(path)
+        and os.path.isfile(os.path.join(path, "control.csv"))
+        and os.path.isfile(os.path.join(path, "state_motor.csv"))
+        and os.path.isfile(os.path.join(path, "joint_list.txt"))
+    )
+
+
+def _discover_balanced_motion_dirs(
+    root: str,
+    manifest_path: str | None,
+    split: str,
+    motion_names_csv: str | None,
+    max_motions: int | None,
+) -> list[tuple[str, str]]:
+    """Resolve per-motion SAGE folders for balanced SysID training."""
+    if motion_names_csv:
+        names = [n.strip() for n in motion_names_csv.split(",") if n.strip()]
+    else:
+        if manifest_path is None:
+            candidate = os.path.join(root, "split_manifest.json")
+            manifest_path = candidate if os.path.isfile(candidate) else None
+
+        if manifest_path:
+            with open(manifest_path) as f:
+                manifest = json.load(f)
+            if split == "all":
+                names = list(manifest.get("train", [])) + list(manifest.get("val", []))
+            else:
+                names = list(manifest.get(split, []))
+            if not names:
+                raise ValueError(f"No '{split}' motion names found in {manifest_path}")
+        else:
+            names = sorted(
+                name
+                for name in os.listdir(root)
+                if _is_sage_motion_dir(os.path.join(root, name))
+            )
+
+    if max_motions is not None:
+        names = names[:max_motions]
+
+    motion_dirs = []
+    missing = []
+    for name in names:
+        path = os.path.join(root, name)
+        if _is_sage_motion_dir(path):
+            motion_dirs.append((name, path))
+        else:
+            missing.append(name)
+
+    if missing:
+        raise ValueError(
+            f"Balanced SysID could not find valid SAGE motion folders under {root}: {missing}"
+        )
+    if not motion_dirs:
+        raise ValueError(f"No per-motion SAGE folders found under {root}")
+    return motion_dirs
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -602,6 +711,7 @@ def main():
 
     # --- Detect mode and load data ---
     single_joint_mode = False
+    balanced_motion_mode = False
 
     if args.data_dir or args.data_files:
         # Single-joint parquet mode
@@ -622,6 +732,61 @@ def main():
             log_message(f"Truncated to {args.max_trajectory_len} steps")
 
         trajectory_len = len(commanded_1d)
+
+    elif args.balanced_real_data_root:
+        # Balanced all-joints CSV mode: load raw per-motion SAGE folders,
+        # reset the sim per motion, and give each motion equal loss weight.
+        balanced_motion_mode = True
+        motion_dirs = _discover_balanced_motion_dirs(
+            args.balanced_real_data_root,
+            args.balanced_manifest,
+            args.balanced_split,
+            args.balanced_motion_names,
+            args.balanced_max_motions,
+        )
+        log_message(
+            f"MODE: Balanced all-joints (CSV), {len(motion_dirs)} motions "
+            f"from {args.balanced_real_data_root}"
+        )
+
+        first_joint_list_path = os.path.join(motion_dirs[0][1], "joint_list.txt")
+        with open(first_joint_list_path) as f:
+            available_data_joints = set(line.strip() for line in f if line.strip())
+        data_joint_names = [n for n in sysid_joint_names if n in available_data_joints]
+        if not data_joint_names:
+            raise ValueError(
+                f"No overlap between sysid joints {sysid_joint_names} and "
+                f"data joints {sorted(available_data_joints)}"
+            )
+        if len(data_joint_names) < len(sysid_joint_names):
+            mirrored_joints = [n for n in sysid_joint_names if n not in available_data_joints]
+            log_message(f"Data has {len(data_joint_names)} of {len(sysid_joint_names)} sysid joints: {data_joint_names}")
+            log_message(f"Mirroring params to {len(mirrored_joints)} joints: {mirrored_joints}")
+
+        motion_data = []
+        total_steps = 0
+        for motion_name, motion_dir in motion_dirs:
+            commanded_nj, measured_nj = load_real_data_timestamp_aligned(
+                motion_dir, control_dt, data_joint_names
+            )
+            if args.max_trajectory_len and len(commanded_nj) > args.max_trajectory_len:
+                commanded_nj = commanded_nj[:args.max_trajectory_len]
+                measured_nj = measured_nj[:args.max_trajectory_len]
+                log_message(f"  {motion_name}: truncated to {args.max_trajectory_len} steps")
+            motion_data.append(
+                {
+                    "name": motion_name,
+                    "commanded": commanded_nj,
+                    "measured": measured_nj,
+                }
+            )
+            total_steps += len(commanded_nj)
+
+        trajectory_len = total_steps
+        log_message(
+            f"Balanced trajectory: {trajectory_len} scored steps across "
+            f"{len(motion_data)} motions at {args.control_freq}Hz = {trajectory_len * control_dt:.1f}s"
+        )
 
     elif args.real_data_dir:
         # All-joints CSV mode — auto-convert motor CSVs if needed
@@ -655,9 +820,13 @@ def main():
         trajectory_len = len(commanded_nj)
 
     else:
-        raise ValueError("Specify --data-dir / --data-files (single-joint) or --real-data-dir (all-joints)")
+        raise ValueError(
+            "Specify --data-dir / --data-files (single-joint), --real-data-dir "
+            "(all-joints), or --balanced-real-data-root (per-motion all-joints)"
+        )
 
-    log_message(f"Trajectory: {trajectory_len} steps at {args.control_freq}Hz = {trajectory_len * control_dt:.1f}s")
+    if not balanced_motion_mode:
+        log_message(f"Trajectory: {trajectory_len} steps at {args.control_freq}Hz = {trajectory_len * control_dt:.1f}s")
 
     # --- Setup simulation ---
     sim_cfg = SimulationCfg(
@@ -704,6 +873,47 @@ def main():
         commanded_t = torch.tensor(commanded_1d, dtype=torch.float32, device=device)
         measured_t = torch.tensor(measured_1d, dtype=torch.float32, device=device)
         start_pos_scalar = commanded_t[0]
+    elif balanced_motion_mode:
+        balanced_motion_tensors = []
+        for motion in motion_data:
+            commanded_motion_t = torch.tensor(motion["commanded"], dtype=torch.float32, device=device)
+            measured_motion_t = torch.tensor(motion["measured"], dtype=torch.float32, device=device)
+            balanced_motion_tensors.append(
+                {
+                    "name": motion["name"],
+                    "commanded": commanded_motion_t,
+                    "measured": measured_motion_t,
+                    # Balanced mode matches benchmark init-sync semantics:
+                    # each episode starts from the first measured real pose.
+                    "init_pos": measured_motion_t[0],
+                    "buffer_pos": measured_motion_t[0],
+                }
+            )
+
+        # Build data_joint_ids for scoring (sim indices of joints with real data)
+        data_joint_ids = [joint_name_to_idx[n] for n in data_joint_names]
+        data_joint_ids_tensor = torch.tensor(data_joint_ids, dtype=torch.long, device=device)
+
+        # Build mirror mapping: command mirrored joints with same data as their counterpart
+        mirror_joint_ids = []
+        mirror_data_indices = []
+        sysid_name_set = set(sysid_joint_names)
+        data_name_set = set(data_joint_names)
+        for i, dn in enumerate(data_joint_names):
+            if dn.startswith("right_"):
+                mn = "left_" + dn[6:]
+            elif dn.startswith("left_"):
+                mn = "right_" + dn[5:]
+            else:
+                continue
+            if mn in sysid_name_set and mn not in data_name_set and mn in joint_name_to_idx:
+                mirror_joint_ids.append(joint_name_to_idx[mn])
+                mirror_data_indices.append(i)
+        has_mirrors = len(mirror_joint_ids) > 0
+        if has_mirrors:
+            mirror_joint_ids_tensor = torch.tensor(mirror_joint_ids, dtype=torch.long, device=device)
+            mirror_data_indices_tensor = torch.tensor(mirror_data_indices, dtype=torch.long, device=device)
+            log_message(f"Mirror target joints: {[robot.joint_names[j] for j in mirror_joint_ids]}")
     else:
         commanded_t = torch.tensor(commanded_nj, dtype=torch.float32, device=device)
         measured_t = torch.tensor(measured_nj, dtype=torch.float32, device=device)
@@ -755,11 +965,10 @@ def main():
     _mt_aliases = {"gru": "lstm", "gru_perjoint": "lstm_perjoint"}
     _mt = _mt_aliases.get(_act_model_type, _act_model_type)
     if _mt in ("implicit", "dcmotor"):
-        _yaml_file = _act_cfg.get("yaml_file")
+        _yaml_file = robot_cfg["actuator_yaml"]
         if _yaml_file:
             _act_info["yaml_file"] = _yaml_file
             try:
-                from actuator_models import load_actuator_params
                 _act_info["parameters"] = load_actuator_params(_yaml_file)
             except Exception:
                 pass
@@ -778,7 +987,13 @@ def main():
         "simulation": _run_cfg.get("simulation", {}),
         "sysid": {
             "bounds_yaml": os.path.basename(args.config),
-            "real_data_dir": args.real_data_dir,
+            "real_data_dir": None if balanced_motion_mode else args.real_data_dir,
+            "balanced_real_data_root": args.balanced_real_data_root,
+            "balanced_manifest": args.balanced_manifest,
+            "balanced_split": args.balanced_split if balanced_motion_mode else None,
+            "balanced_motion_names": [m["name"] for m in balanced_motion_tensors] if balanced_motion_mode else None,
+            "balanced_loss": balanced_motion_mode,
+            "balanced_init_source": "measured_row0" if balanced_motion_mode else None,
             "joints": optimizer.joint_types,
             "mirror": optimizer.mirror,
             "num_envs": args.num_envs,
@@ -873,14 +1088,28 @@ def main():
     #   write_joint_stiffness_to_sim()  → model.joint_target_ke  (PD kp)
     #   write_joint_damping_to_sim()    → model.joint_target_kd  (PD kd)
     #   (no Isaac Lab API)              → model.mujoco.dof_passive_damping  (custom writer below)
-    _env_ids = torch.arange(num_envs, dtype=torch.int32, device=device)
+    _env_ids_list = list(range(num_envs))
+    _arm_joint_ids_list = [int(joint_id) for joint_id in arm_joint_ids]
 
-    # --- Locate Newton model for direct property access (viscous damping) ---
-    # Newton's passive viscous damping (model.mujoco.dof_passive_damping) has no
-    # Isaac Lab write API, so we access the Newton model directly via BFS from
-    # robot.root_view (an ArticulationView wrapping the Newton solver).
+    def set_joint_position_target_full(target: torch.Tensor):
+        if hasattr(robot, "set_joint_position_target_index"):
+            robot.set_joint_position_target_index(target=target)
+        else:
+            robot.set_joint_position_target(target)
+
+    def set_joint_effort_target_full(target: torch.Tensor):
+        if hasattr(robot, "set_joint_effort_target_index"):
+            robot.set_joint_effort_target_index(target=target)
+        else:
+            robot.set_joint_effort_target(target)
+
+    # --- Locate Newton model for direct property access ---
+    # Viscous friction uses a MuJoCo-solver-specific passive damping field that
+    # does not have a public Isaac Lab writer, so this one parameter still needs
+    # direct access to the Newton model.
     _newton_model = None
-    _needs_newton_model = "viscous_friction" in {n for n in optimizer.property_names}
+    _DIRECT_NEWTON_PROPERTIES = {"viscous_friction"}
+    _needs_newton_model = bool(_DIRECT_NEWTON_PROPERTIES.intersection(optimizer.property_names))
     if _needs_newton_model:
         _visited = set()
         _queue = [("view", robot.root_view)]
@@ -916,22 +1145,42 @@ def main():
                 "Remove 'viscous_friction' from bounds YAML or check Newton version."
             )
 
-        # Verify the mujoco custom attribute namespace exists
+        # Verify the mujoco custom attribute namespace exists when needed.
         _mujoco_ns = getattr(_newton_model, "mujoco", None)
-        if _mujoco_ns is None or not hasattr(_mujoco_ns, "dof_passive_damping"):
+        if "viscous_friction" in optimizer.property_names and (
+            _mujoco_ns is None or not hasattr(_mujoco_ns, "dof_passive_damping")
+        ):
             raise RuntimeError(
                 "Newton model has no 'mujoco.dof_passive_damping' attribute. "
                 "Ensure Newton is using the MuJoCo Warp solver (solver_cfg.integrator = 'implicitfast')."
             )
-        log_message(f"Newton mujoco.dof_passive_damping available (shape: {_newton_model.mujoco.dof_passive_damping.shape})")
+        if "viscous_friction" in optimizer.property_names:
+            log_message(f"Newton mujoco.dof_passive_damping available (shape: {_newton_model.mujoco.dof_passive_damping.shape})")
 
-    def _write_viscous_friction(vals: torch.Tensor):
-        """Write passive viscous damping directly to Newton's mujoco.dof_passive_damping.
+    def _get_newton_array(path: str):
+        obj = _newton_model
+        for attr in path.split("."):
+            obj = getattr(obj, attr)
+        return obj
 
-        vals: shape (num_envs, num_arm_joints) — per-env, per-joint damping values.
+    try:
+        from isaaclab_newton.physics import NewtonManager as _NewtonModelChangeManager
+        from newton.solvers import SolverNotifyFlags as _SolverNotifyFlags
+    except Exception:
+        _NewtonModelChangeManager = None
+        _SolverNotifyFlags = None
+
+    def _notify_joint_dof_properties_changed():
+        if _NewtonModelChangeManager is not None and _SolverNotifyFlags is not None:
+            _NewtonModelChangeManager.add_model_change(_SolverNotifyFlags.JOINT_DOF_PROPERTIES)
+
+    def _write_newton_joint_array(path: str, vals: torch.Tensor):
+        """Write per-env, per-joint values directly to a Newton model array.
+
+        vals: shape (num_envs, num_arm_joints).
         The Newton array may be 2D (num_worlds, num_dofs) or 1D (total_dofs,).
         """
-        dof_damping = _newton_model.mujoco.dof_passive_damping
+        dof_damping = _get_newton_array(path)
         vals_np = vals.cpu().numpy()
         dof_np = dof_damping.numpy()
         num_dofs = len(robot.joint_names)
@@ -946,6 +1195,21 @@ def main():
                 for j_idx, joint_id in enumerate(arm_joint_ids):
                     dof_np[env_i * num_dofs + joint_id] = vals_np[env_i, j_idx]
         dof_damping.assign(dof_np)
+        _notify_joint_dof_properties_changed()
+
+    def _write_joint_property(index_method_name: str, method_name: str, arg_name: str, vals: torch.Tensor):
+        """Write an optimized parameter matrix through the current or legacy API.
+
+        Newer Isaac Lab/Newton builds expose write_joint_*_to_sim(...);
+        this repo version exposes write_joint_*_to_sim_index(...). Supporting
+        both keeps the sysid tool runnable from either checkout.
+        """
+        vals = vals.contiguous().to(dtype=torch.float32)
+        kwargs = {arg_name: vals, "joint_ids": _arm_joint_ids_list, "env_ids": _env_ids_list}
+        if hasattr(robot, index_method_name):
+            getattr(robot, index_method_name)(**kwargs)
+        else:
+            getattr(robot, method_name)(**kwargs)
 
     # --- Stribeck friction support ---
     # When stribeck_velocity is being optimized, we disable Newton's built-in
@@ -965,13 +1229,18 @@ def main():
         set Newton's joint_friction to 0 (friction applied externally instead)."""
         if _has_stribeck:
             # Cache the values for external Stribeck computation; zero out Newton's
-            robot.write_joint_friction_coefficient_to_sim_index(
-                joint_friction_coeff=torch.zeros_like(vals),
-                joint_ids=arm_joint_ids_tensor, env_ids=_env_ids,
+            _write_joint_property(
+                "write_joint_friction_coefficient_to_sim_index",
+                "write_joint_friction_coefficient_to_sim",
+                "joint_friction_coeff",
+                torch.zeros_like(vals),
             )
         else:
-            robot.write_joint_friction_coefficient_to_sim_index(
-                joint_friction_coeff=vals, joint_ids=arm_joint_ids_tensor, env_ids=_env_ids,
+            _write_joint_property(
+                "write_joint_friction_coefficient_to_sim_index",
+                "write_joint_friction_coefficient_to_sim",
+                "joint_friction_coeff",
+                vals,
             )
 
     # Cache for dynamic_friction values (needed for Stribeck torque computation)
@@ -992,15 +1261,21 @@ def main():
         # Apply as external effort on arm joints
         effort = to_torch(robot.data.joint_effort_target).clone()
         effort[:, arm_joint_ids] = friction_torque
-        robot.set_joint_effort_target_index(target=effort)
+        set_joint_effort_target_full(effort)
 
     _PARAM_WRITERS = {
-        "armature":          lambda vals: robot.write_joint_armature_to_sim_index(armature=vals, joint_ids=arm_joint_ids_tensor, env_ids=_env_ids),
+        "armature":          lambda vals: _write_joint_property(
+            "write_joint_armature_to_sim_index", "write_joint_armature_to_sim", "armature", vals
+        ),
         "dynamic_friction":  _cache_and_write_dynamic_friction,
-        "viscous_friction":  _write_viscous_friction,
+        "viscous_friction":  lambda vals: _write_newton_joint_array("mujoco.dof_passive_damping", vals),
         "stribeck_velocity": _cache_stribeck_velocity,
-        "stiffness":         lambda vals: robot.write_joint_stiffness_to_sim_index(stiffness=vals, joint_ids=arm_joint_ids_tensor, env_ids=_env_ids),
-        "damping":           lambda vals: robot.write_joint_damping_to_sim_index(damping=vals, joint_ids=arm_joint_ids_tensor, env_ids=_env_ids),
+        "stiffness":         lambda vals: _write_joint_property(
+            "write_joint_stiffness_to_sim_index", "write_joint_stiffness_to_sim", "stiffness", vals
+        ),
+        "damping":           lambda vals: _write_joint_property(
+            "write_joint_damping_to_sim_index", "write_joint_damping_to_sim", "damping", vals
+        ),
     }
 
     def write_params_to_envs():
@@ -1015,17 +1290,19 @@ def main():
             except (AttributeError, TypeError) as e:
                 log_message(f"WARNING: write {prop_name} to sim failed: {e}")
 
-    def reset_envs():
+    def reset_envs(initial_pos=None):
         joint_pos = to_torch(robot.data.joint_pos).clone()
         joint_vel = to_torch(robot.data.joint_vel).clone()
         if single_joint_mode:
-            joint_pos[:, target_joint_idx] = start_pos_scalar
+            start_pos = start_pos_scalar if initial_pos is None else initial_pos
+            joint_pos[:, target_joint_idx] = start_pos
             joint_vel[:, target_joint_idx] = 0.0
         else:
-            joint_pos[:, data_joint_ids_tensor] = start_pos_nj.unsqueeze(0).expand(num_envs, -1)
+            start_pos = start_pos_nj if initial_pos is None else initial_pos
+            joint_pos[:, data_joint_ids_tensor] = start_pos.unsqueeze(0).expand(num_envs, -1)
             joint_vel[:, data_joint_ids_tensor] = 0.0
             if has_mirrors:
-                joint_pos[:, mirror_joint_ids_tensor] = start_pos_nj[mirror_data_indices_tensor].unsqueeze(0).expand(num_envs, -1)
+                joint_pos[:, mirror_joint_ids_tensor] = start_pos[mirror_data_indices_tensor].unsqueeze(0).expand(num_envs, -1)
                 joint_vel[:, mirror_joint_ids_tensor] = 0.0
         robot.write_joint_state_to_sim(joint_pos, joint_vel)
         scene.write_data_to_sim()
@@ -1034,56 +1311,69 @@ def main():
 
     # --- Optimization loop ---
     buffer_steps = int(args.buffer_time / control_dt)
-    total_sim_steps = (buffer_steps + trajectory_len) * divisor
-    log_message(f"Sim steps per generation: {total_sim_steps} "
-                f"(buffer {buffer_steps * divisor} + trajectory {trajectory_len * divisor}) "
-                f"x {num_envs} envs")
+    if balanced_motion_mode:
+        total_sim_steps = sum(
+            (buffer_steps + len(motion["commanded"])) * divisor
+            for motion in balanced_motion_tensors
+        )
+        log_message(
+            f"Sim steps per generation: {total_sim_steps} "
+            f"(per-motion buffer {buffer_steps * divisor} x {len(balanced_motion_tensors)} "
+            f"+ trajectory {trajectory_len * divisor}) x {num_envs} envs"
+        )
+    else:
+        total_sim_steps = (buffer_steps + trajectory_len) * divisor
+        log_message(f"Sim steps per generation: {total_sim_steps} "
+                    f"(buffer {buffer_steps * divisor} + trajectory {trajectory_len * divisor}) "
+                    f"x {num_envs} envs")
 
-    pbar = tqdm(range(optimizer.max_iterations), desc="CMA-ES", unit="gen",
-                bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}] {postfix}")
-    for gen in pbar:
-        optimizer.sample_population()
-        write_params_to_envs()
-        reset_envs()
+    def replay_motion(
+        commanded_seq,
+        measured_seq,
+        init_pos,
+        buffer_pos,
+        inner_pbar,
+        balanced_score: bool,
+    ):
+        """Replay one command sequence and accumulate either sample- or motion-balanced loss."""
+        reset_envs(init_pos)
 
-        # Inner progress bar for sim steps within a generation
-        inner_pbar = tqdm(total=total_sim_steps, desc=f"  Gen {gen}", unit="step",
-                          leave=False, bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]")
-
-        # Buffer: hold at start to settle
+        # Buffer: hold at the episode's initial real pose to settle gravity/friction.
         for step in range(buffer_steps * divisor):
             if step % divisor == 0:
                 target = to_torch(robot.data.joint_pos).clone()
                 if single_joint_mode:
-                    target[:, target_joint_idx] = start_pos_scalar
+                    target[:, target_joint_idx] = buffer_pos
                 else:
-                    target[:, data_joint_ids_tensor] = start_pos_nj.unsqueeze(0).expand(num_envs, -1)
+                    target[:, data_joint_ids_tensor] = buffer_pos.unsqueeze(0).expand(num_envs, -1)
                     if has_mirrors:
-                        target[:, mirror_joint_ids_tensor] = start_pos_nj[mirror_data_indices_tensor].unsqueeze(0).expand(num_envs, -1)
-                robot.set_joint_position_target_index(target=target)
+                        target[:, mirror_joint_ids_tensor] = buffer_pos[mirror_data_indices_tensor].unsqueeze(0).expand(num_envs, -1)
+                set_joint_position_target_full(target)
             sim_step()
             inner_pbar.update(1)
 
-        # Motor lag buffer
+        # Motor lag buffer starts from the first recorded command, not the
+        # measured init pose, because lag models delayed command transport.
         if motor_lag_steps > 0:
             cmd_buffer = deque(maxlen=motor_lag_steps + 1)
-            if single_joint_mode:
-                for _ in range(motor_lag_steps):
-                    cmd_buffer.append(start_pos_scalar.clone())
-            else:
-                for _ in range(motor_lag_steps):
-                    cmd_buffer.append(start_pos_nj.clone())
+            first_cmd = commanded_seq[0]
+            for _ in range(motor_lag_steps):
+                cmd_buffer.append(first_cmd.clone())
         else:
             cmd_buffer = None
 
-        # Replay trajectory
-        for t in range(trajectory_len * divisor):
+        if balanced_score:
+            motion_sse = torch.zeros(num_envs, device=device)
+            motion_score_steps = 0
+
+        motion_len = len(commanded_seq)
+        for t in range(motion_len * divisor):
             index = t // divisor
-            if index >= trajectory_len:
+            if index >= motion_len:
                 break
 
             if t % divisor == 0:
-                cmd = commanded_t[index]
+                cmd = commanded_seq[index]
 
                 if cmd_buffer is not None:
                     cmd_buffer.append(cmd.clone() if cmd.dim() > 0 else cmd.clone())
@@ -1095,22 +1385,75 @@ def main():
 
                 if single_joint_mode:
                     target[:, target_joint_idx] = delayed_cmd
-                    robot.set_joint_position_target_index(target=target)
+                    set_joint_position_target_full(target)
                     sim_pos = to_torch(robot.data.joint_pos)[:, target_joint_idx]
-                    real_pos = measured_t[index]
+                    real_pos = measured_seq[index]
                     diff = sim_pos - real_pos
-                    optimizer.scores += diff * diff
-                    optimizer._score_steps += 1
+                    if balanced_score:
+                        motion_sse += diff * diff
+                        motion_score_steps += 1
+                    else:
+                        optimizer.scores += diff * diff
+                        optimizer._score_steps += 1
                 else:
                     target[:, data_joint_ids_tensor] = delayed_cmd.unsqueeze(0).expand(num_envs, -1)
                     if has_mirrors:
                         target[:, mirror_joint_ids_tensor] = delayed_cmd[mirror_data_indices_tensor].unsqueeze(0).expand(num_envs, -1)
-                    robot.set_joint_position_target_index(target=target)
+                    set_joint_position_target_full(target)
                     sim_pos = to_torch(robot.data.joint_pos)[:, data_joint_ids_tensor]
-                    optimizer.accumulate_score(sim_pos, measured_t[index])
+                    if balanced_score:
+                        diff = sim_pos - measured_seq[index].unsqueeze(0)
+                        motion_sse += (diff * diff).sum(dim=1)
+                        motion_score_steps += 1
+                    else:
+                        optimizer.accumulate_score(sim_pos, measured_seq[index])
 
             sim_step()
             inner_pbar.update(1)
+
+        if balanced_score and motion_score_steps > 0:
+            optimizer.scores += motion_sse / motion_score_steps
+            optimizer._score_steps += 1
+
+    pbar = tqdm(range(optimizer.max_iterations), desc="CMA-ES", unit="gen",
+                bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}] {postfix}")
+    for gen in pbar:
+        optimizer.sample_population()
+        write_params_to_envs()
+
+        # Inner progress bar for sim steps within a generation
+        inner_pbar = tqdm(total=total_sim_steps, desc=f"  Gen {gen}", unit="step",
+                          leave=False, bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]")
+
+        if balanced_motion_mode:
+            for motion in balanced_motion_tensors:
+                replay_motion(
+                    motion["commanded"],
+                    motion["measured"],
+                    motion["init_pos"],
+                    motion["buffer_pos"],
+                    inner_pbar,
+                    balanced_score=True,
+                )
+        else:
+            if single_joint_mode:
+                replay_motion(
+                    commanded_t,
+                    measured_t,
+                    start_pos_scalar,
+                    start_pos_scalar,
+                    inner_pbar,
+                    balanced_score=False,
+                )
+            else:
+                replay_motion(
+                    commanded_t,
+                    measured_t,
+                    start_pos_nj,
+                    start_pos_nj,
+                    inner_pbar,
+                    balanced_score=False,
+                )
 
         inner_pbar.close()
 
@@ -1139,6 +1482,14 @@ def main():
         best_params["joint_name"] = args.joint_name
         best_params["data_source"] = args.data_dir or args.data_files
         best_params["num_files"] = len(parquet_files)
+    elif balanced_motion_mode:
+        best_params["mode"] = "balanced_all_joints"
+        best_params["data_source"] = args.balanced_real_data_root
+        best_params["manifest"] = args.balanced_manifest
+        best_params["split"] = args.balanced_split
+        best_params["motions"] = [motion["name"] for motion in balanced_motion_tensors]
+        best_params["loss"] = "mean_per_motion_position_mse"
+        best_params["init_source"] = "measured_row0"
     else:
         best_params["mode"] = "all_joints"
         best_params["data_source"] = args.real_data_dir

@@ -120,3 +120,69 @@ def load_real_data(data_dir: str, target_dt: float, joint_names: list[str]) -> t
 
     _log(f"Loaded real data: {len(ctrl_pos)} steps, {num_joints} joints")
     return ctrl_pos, state_pos
+
+
+def _read_sage_positions(
+    path: str, joint_indices: list[int]
+) -> tuple[np.ndarray, np.ndarray]:
+    """Read timestamped joint positions from a SAGE control/state CSV."""
+    times = []
+    positions = []
+    with open(path) as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            times.append(float(row["timestamp"]) / 1e6)
+            raw_positions = ast.literal_eval(row["positions"])
+            positions.append([raw_positions[i] for i in joint_indices])
+
+    if len(times) < 2:
+        raise ValueError(f"{path} must contain at least 2 timestamped rows")
+    return np.asarray(times, dtype=np.float64), np.asarray(positions, dtype=np.float64)
+
+
+def load_real_data_timestamp_aligned(
+    data_dir: str, target_dt: float, joint_names: list[str]
+) -> tuple[np.ndarray, np.ndarray]:
+    """Load async SAGE control/state data by timestamp alignment.
+
+    This is the path for raw SO-101 per-motion folders where ``control.csv``
+    can be ~50 Hz and ``state_motor.csv`` can be several hundred Hz. It
+    interpolates both command and measured state onto a common fixed-rate grid
+    over their shared time interval, preserving the real episode duration.
+    """
+    num_joints = len(joint_names)
+
+    joint_list_path = os.path.join(data_dir, "joint_list.txt")
+    with open(joint_list_path) as f:
+        all_joint_names = [line.strip() for line in f if line.strip()]
+
+    joint_indices = []
+    for name in joint_names:
+        joint_indices.append(all_joint_names.index(name))
+
+    ctrl_t, ctrl_pos = _read_sage_positions(os.path.join(data_dir, "control.csv"), joint_indices)
+    state_t, state_pos = _read_sage_positions(os.path.join(data_dir, "state_motor.csv"), joint_indices)
+
+    t0 = max(float(ctrl_t[0]), float(state_t[0]))
+    t1 = min(float(ctrl_t[-1]), float(state_t[-1]))
+    if t1 <= t0:
+        raise ValueError(
+            f"control.csv and state_motor.csv have no overlapping timestamp range in {data_dir}"
+        )
+
+    # Build a duration-preserving target grid. The last point is kept inside
+    # the overlap interval so np.interp never extrapolates.
+    num_steps = int(np.floor((t1 - t0) / target_dt)) + 1
+    target_t = t0 + np.arange(num_steps, dtype=np.float64) * target_dt
+
+    new_ctrl = np.zeros((len(target_t), num_joints), dtype=np.float64)
+    new_state = np.zeros((len(target_t), num_joints), dtype=np.float64)
+    for j in range(num_joints):
+        new_ctrl[:, j] = np.interp(target_t, ctrl_t, ctrl_pos[:, j])
+        new_state[:, j] = np.interp(target_t, state_t, state_pos[:, j])
+
+    _log(
+        f"Timestamp-aligned real data: ctrl {len(ctrl_pos)} rows, "
+        f"state {len(state_pos)} rows -> {len(target_t)} steps at {1 / target_dt:.0f}Hz"
+    )
+    return new_ctrl, new_state

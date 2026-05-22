@@ -241,11 +241,14 @@ input/sysid_data/so101/<motion>/
 └── joint_list.txt       # six USD joint names, one per line
 ```
 
-`control.csv` and `state_motor.csv` must have the same number of rows; row
-index is wall-clock time. If you collect commands and state at different
-rates (e.g. 50 Hz control / 500 Hz state from a hirate collector), resample
-by nearest-timestamp pairing in your data-prep script *before* feeding into
-sysid — the toolbox does not align asynchronously-collected streams.
+For the standard `--real-data-dir` path, `control.csv` and
+`state_motor.csv` must have the same number of rows; row index is wall-clock
+time. If they differ by more than one row, the loader raises instead of
+silently truncating, because row truncation time-stretches async data.
+
+For raw per-motion SO-101 data where commands and motor state are recorded at
+different rates, use the balanced path documented below. It aligns each
+motion by timestamp before replay.
 
 Torques in `state_motor.csv` must be in **Nm**. If your driver reports
 servo current (mA), multiply by your measured Kt (Nm/A) before writing the
@@ -290,6 +293,49 @@ python scripts/sysid/run_sysid.py \
     --output-dir output/sysid/so101/elbow_pitch \
     --headless
 ```
+
+#### Balanced per-motion training
+
+For a multi-motion training corpus, prefer the balanced path over manually
+concatenating all recordings into one long CSV. Balanced mode keeps one global
+CMA-ES population, but replays each motion as its own episode:
+
+1. Load each per-motion SAGE folder independently.
+2. Align `control.csv` and `state_motor.csv` by timestamp onto the requested
+   control grid.
+3. Reset the sim to the first measured real pose for that motion.
+4. Hold that pose for `buffer_time` so gravity, friction, and PD settle.
+5. Replay the motion command sequence.
+6. Compute position MSE for that motion, then average motion losses equally.
+
+This avoids a long or easy recording dominating the objective just because it
+has more rows. It also avoids the old concat issue where drift from one
+motion carries into the next artificial segment.
+
+Example:
+
+```bash
+python scripts/sysid/run_sysid.py \
+    --robot-name so101 \
+    --balanced-real-data-root input/sysid_data/so101/per_motion_raw \
+    --balanced-manifest input/sysid_data/so101/per_motion_raw/split_manifest.json \
+    --balanced-split train \
+    --physics-freq 500 \
+    --control-freq 500 \
+    --epsilon 0 \
+    --output-dir output/sysid/so101/balanced_train \
+    --headless
+```
+
+`--epsilon 0` is recommended for short pilots so CMA-ES does not stop after a
+near-flat first generation. For production, use enough generations to confirm
+the best score is still improving and validate on held-out motions afterward.
+
+Historical SO-101 fits on Vaibhav's machine used wider bounds that also
+optimized `stiffness` and `damping`, plus the upstream Feetech base actuator
+(`effort_limit_sim: 3.35`, `velocity_limit_sim: 30.0`). Do not compare those
+numbers directly against the default clean-repo SO-101 bounds/template, which
+only optimize armature/friction terms and use lower datasheet defaults.
 
 #### 4. Update the actuator YAML
 

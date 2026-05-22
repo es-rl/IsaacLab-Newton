@@ -17,7 +17,7 @@ import pytest
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(_HERE))
 
-from data_loading import load_real_data  # noqa: E402
+from data_loading import load_real_data, load_real_data_timestamp_aligned  # noqa: E402
 
 
 def _write_motion(dirpath: str, n_ctrl: int, n_state: int, n_joints: int = 4) -> None:
@@ -73,3 +73,35 @@ def test_empty_state_raises() -> None:
         _write_motion(tmp, n_ctrl=10, n_state=0)
         with pytest.raises(ValueError):
             load_real_data(tmp, target_dt=0.002, joint_names=["joint_0"])
+
+
+def test_timestamp_aligned_loader_handles_async_so101_shape() -> None:
+    """Raw SO-101-style data should align by timestamps without row truncation."""
+    with tempfile.TemporaryDirectory() as tmp:
+        joint_names = ["joint_0", "joint_1"]
+        with open(os.path.join(tmp, "joint_list.txt"), "w") as f:
+            f.write("\n".join(joint_names) + "\n")
+
+        with open(os.path.join(tmp, "control.csv"), "w") as f:
+            f.write("timestamp,positions\n")
+            for i in range(3):
+                positions = [float(i), float(i + 10)]
+                f.write(f'{i * 20000},"{positions}"\n')  # 50 Hz commands
+
+        with open(os.path.join(tmp, "state_motor.csv"), "w") as f:
+            f.write("timestamp,positions\n")
+            for i in range(21):
+                t_us = i * 2000  # 500 Hz state
+                t_s = t_us / 1e6
+                positions = [100.0 * t_s, 200.0 * t_s]
+                f.write(f'{t_us},"{positions}"\n')
+
+        ctrl, state = load_real_data_timestamp_aligned(
+            tmp, target_dt=0.002, joint_names=["joint_0", "joint_1"]
+        )
+
+        assert ctrl.shape == (21, 2)
+        assert state.shape == (21, 2)
+        assert ctrl[0, 0] == pytest.approx(0.0)
+        assert ctrl[-1, 0] == pytest.approx(2.0)
+        assert state[-1, 0] == pytest.approx(4.0)
