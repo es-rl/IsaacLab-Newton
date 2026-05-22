@@ -260,7 +260,8 @@ Use `scripts/sim2real_gap/g1_overlay_replay.py` to visually compare existing
 benchmark outputs in the Newton viewer. This is visualization only: it does not
 rerun actuator physics and it does not replace the benchmark metrics. It reads
 the logged real/default/model `state_motor.csv` files and kinematically replays
-multiple fixed-base G1 copies together.
+multiple fixed-base G1 copies together. The replay loops by default; stop it
+with `Ctrl+C` in the terminal, or pass `--no-loop` to exit after one replay.
 
 Arm, exact overlay of real + default PD + production GRU:
 

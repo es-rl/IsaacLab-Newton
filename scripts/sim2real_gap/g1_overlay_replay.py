@@ -366,13 +366,6 @@ def _write_trace(robot, joint_ids: list[int], pos_row: np.ndarray, vel_row: np.n
     robot.set_joint_position_target(joint_pos)
 
 
-def _viewer_running(sim: SimulationContext) -> bool:
-    visualizers = getattr(sim, "visualizers", None) or getattr(sim, "_visualizers", [])
-    if not visualizers:
-        return simulation_app.is_running()
-    return any(viz.is_running() and not viz.is_closed for viz in visualizers)
-
-
 def main() -> None:
     real_trace, baseline_trace, model_trace = _resolve_trace_paths()
     traces = []
@@ -400,7 +393,7 @@ def main() -> None:
     print(f"  real:     {real_trace.csv_path}")
     print(f"  baseline: {baseline_trace.csv_path}")
     print(f"  model:    {model_trace.csv_path}")
-    print("  close the Newton viewer window or press ESC to stop")
+    print("  press Ctrl+C in the terminal to stop, or pass --no-loop for one replay")
 
     sim, scene = _make_scene()
     robots = {
@@ -418,7 +411,7 @@ def main() -> None:
     wall_next = time.perf_counter()
     frame_dt = 1.0 / args.render_hz
     try:
-        while simulation_app.is_running() and _viewer_running(sim):
+        while True:
             idx = frame % len(grid)
             if args.show_real:
                 _write_trace(robots["real"], joint_ids["real"], real_pos[idx], real_vel[idx])
