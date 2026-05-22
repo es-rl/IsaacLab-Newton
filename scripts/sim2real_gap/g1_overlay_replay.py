@@ -23,11 +23,13 @@ import csv
 import os
 import sys
 import time
+import traceback
 from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 import torch
+import warp as wp
 
 from isaaclab.app import AppLauncher
 
@@ -62,6 +64,10 @@ parser.add_argument("--hide-model", action="store_false", dest="show_model")
 
 AppLauncher.add_app_launcher_args(parser)
 args = parser.parse_args()
+
+
+def _log(message: str) -> None:
+    print(message, flush=True)
 
 
 # Launch Isaac Lab before importing simulation-dependent modules.
@@ -321,6 +327,7 @@ def _layout_positions() -> dict[str, tuple[float, float, float]]:
 
 
 def _make_scene() -> tuple[SimulationContext, InteractiveScene]:
+    _log("[overlay] creating SimulationContext")
     sim_cfg = SimulationCfg(
         dt=1.0 / args.render_hz,
         render_interval=1,
@@ -332,6 +339,7 @@ def _make_scene() -> tuple[SimulationContext, InteractiveScene]:
     )
     sim = SimulationContext(sim_cfg)
 
+    _log("[overlay] creating InteractiveScene")
     positions = _layout_positions()
     scene_cfg = G1OverlaySceneCfg(num_envs=1, env_spacing=4.0)
     scene_cfg.real = _make_robot_cfg("RealTrace", positions["real"], (0.08, 0.08, 0.08))
@@ -341,8 +349,11 @@ def _make_scene() -> tuple[SimulationContext, InteractiveScene]:
     _apply_display_color("/World/envs/env_0/RealTrace", (0.08, 0.08, 0.08))
     _apply_display_color("/World/envs/env_0/BaselineSim", (0.95, 0.25, 0.12))
     _apply_display_color("/World/envs/env_0/ModelSim", (0.1, 0.65, 0.2))
+    _log("[overlay] calling sim.reset()")
     sim.reset()
+    _log("[overlay] sim.reset() returned")
     scene.reset()
+    _log("[overlay] scene.reset() returned")
     return sim, scene
 
 
@@ -356,9 +367,19 @@ def _joint_indices(robot, trace: Trace) -> list[int]:
     return indices
 
 
+def _to_torch(data) -> torch.Tensor:
+    if isinstance(data, torch.Tensor):
+        return data
+    try:
+        return wp.to_torch(data)
+    except Exception:
+        device = getattr(data, "device", None)
+        return torch.as_tensor(np.asarray(data), device=device)
+
+
 def _write_trace(robot, joint_ids: list[int], pos_row: np.ndarray, vel_row: np.ndarray) -> None:
-    joint_pos = robot.data.default_joint_pos.clone()
-    joint_vel = torch.zeros_like(robot.data.default_joint_vel)
+    joint_pos = _to_torch(robot.data.default_joint_pos).clone()
+    joint_vel = torch.zeros_like(_to_torch(robot.data.default_joint_vel))
     device = joint_pos.device
     joint_pos[:, joint_ids] = torch.tensor(pos_row, dtype=joint_pos.dtype, device=device).unsqueeze(0)
     joint_vel[:, joint_ids] = torch.tensor(vel_row, dtype=joint_vel.dtype, device=device).unsqueeze(0)
@@ -383,19 +404,20 @@ def main() -> None:
     baseline_pos, baseline_vel = _interp_trace(baseline_trace, grid)
     model_pos, model_vel = _interp_trace(model_trace, grid)
 
-    print("G1 overlay replay")
-    print(f"  motion: {args.motion}")
-    print(f"  layout: {args.layout}")
-    print(
+    _log("G1 overlay replay")
+    _log(f"  motion: {args.motion}")
+    _log(f"  layout: {args.layout}")
+    _log(
         f"  duration: {grid[-1] - grid[0]:.2f}s trace time at "
         f"{args.render_hz:.1f} viewer Hz ({args.playback_speed:.2f}x speed)"
     )
-    print(f"  real:     {real_trace.csv_path}")
-    print(f"  baseline: {baseline_trace.csv_path}")
-    print(f"  model:    {model_trace.csv_path}")
-    print("  press Ctrl+C in the terminal to stop, or pass --no-loop for one replay")
+    _log(f"  real:     {real_trace.csv_path}")
+    _log(f"  baseline: {baseline_trace.csv_path}")
+    _log(f"  model:    {model_trace.csv_path}")
+    _log("  press Ctrl+C in the terminal to stop, or pass --no-loop for one replay")
 
     sim, scene = _make_scene()
+    _log("[overlay] scene ready; resolving joints")
     robots = {
         "real": scene["real"],
         "baseline": scene["baseline"],
@@ -411,6 +433,7 @@ def main() -> None:
     wall_next = time.perf_counter()
     frame_dt = 1.0 / args.render_hz
     try:
+        _log("[overlay] entering replay loop")
         while True:
             idx = frame % len(grid)
             if args.show_real:
@@ -426,6 +449,8 @@ def main() -> None:
             scene.update(frame_dt)
 
             frame += 1
+            if frame == 1:
+                _log("[overlay] rendered first frame")
             if frame >= len(grid) and args.no_loop:
                 break
 
@@ -433,9 +458,19 @@ def main() -> None:
             sleep_s = wall_next - time.perf_counter()
             if sleep_s > 0.0:
                 time.sleep(sleep_s)
+    except BaseException as exc:
+        _log(f"[overlay] replay loop failed at frame {frame}: {type(exc).__name__}: {exc}")
+        traceback.print_exc()
+        raise
     finally:
+        _log("[overlay] closing simulation app")
         simulation_app.close()
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except BaseException as exc:
+        _log(f"[overlay] fatal: {type(exc).__name__}: {exc}")
+        traceback.print_exc()
+        raise
