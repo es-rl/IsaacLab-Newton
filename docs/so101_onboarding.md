@@ -1,7 +1,7 @@
 # SO-101 Newton onboarding
 
-This is the short path for a coworker who wants to get started with the SO-101
-SysID and sim2real benchmark workflow in IsaacLab-Newton.
+This is the short path for a new user who wants to get started with the
+SO-101 SysID and sim2real benchmark workflow in IsaacLab-Newton.
 
 Use this as the entry point before reading the deeper investigation note in
 `docs/so101_balanced_sysid.md`.
@@ -18,37 +18,30 @@ There are two separate steps:
 Do not train and report on the same motions. Use train motions for fitting and
 held-out motions for validation.
 
-## Branch
+## First-time setup
 
-Use the existing IsaacLab-Newton repo. Do not fork for onboarding.
-
-```bash
-git clone git@github.com:es-rl/IsaacLab-Newton.git
-cd IsaacLab-Newton
-git checkout vbhavanantha/so101-balanced-sysid
-```
-
-This branch is not a standalone installer. If this is a first-time
-IsaacLab-Newton machine, set up the IsaacLab-Newton stack first, then run the
-SO-101 smoke workflow.
-
-Minimum assumptions for a new machine:
-
-- Ubuntu/Linux workstation with an NVIDIA GPU and working NVIDIA drivers.
-- Git LFS installed, because robot USDs/meshes may be stored as LFS objects.
-- Either Docker support for the repo's Docker workflow, or a local Isaac
-  Lab/Isaac Sim Python environment.
-
-After cloning:
+Assume IsaacLab-Newton is not installed yet. Start by cloning this repo,
+checking out the SO-101 branch, and pulling Git LFS assets.
 
 ```bash
 sudo apt install git-lfs
 git lfs install
+
+git clone https://github.com/es-rl/IsaacLab-Newton.git
+cd IsaacLab-Newton
+git checkout vbhavanantha/so101-balanced-sysid
 git lfs pull
 ```
 
-The repo README has the canonical install path. For a new user, the simplest
-route is usually the Docker workflow:
+Minimum machine assumptions:
+
+- Ubuntu/Linux workstation with an NVIDIA GPU and working NVIDIA drivers.
+- Git LFS, because robot USDs/meshes may be stored as LFS objects.
+- Docker support for the repo Docker workflow, or a local Isaac Lab/Isaac Sim
+  Python environment.
+
+The repo README is the canonical install reference. For a new user, the
+simplest route is usually Docker:
 
 ```bash
 ./docker/build-docker.sh
@@ -57,27 +50,12 @@ route is usually the Docker workflow:
 
 Then run the SO-101 commands from inside the container. If using a local conda
 or venv install instead of Docker, first follow the IsaacLab-Newton/Isaac Lab
-installation instructions in the repo README, verify `./isaaclab.sh` works, and
-then continue with this document.
+installation instructions in the repo README and verify `./isaaclab.sh` works.
 
-On Vaibhav's machine the working checkout is:
-
-```text
-/home/vbhavanantha/IsaacLab-Newton-g1-repro
-```
-
-## Environment
-
-Use the IsaacLab conda environment:
-
-```bash
-cd /path/to/IsaacLab-Newton
-source /home/vbhavanantha/miniconda3/etc/profile.d/conda.sh
-conda activate env_isaaclab
-```
-
-If running on a different machine, replace the conda path and `--experience`
-path in the commands below with that machine's IsaacLab-Newton checkout.
+The commands below use the local-install style:
+`./isaaclab.sh -p <script> ... --experience /path/to/IsaacLab-Newton/apps/isaaclab.python.headless.kit`.
+If running inside the repo Docker shell, run the same script with
+`python <script> ...` and omit the final `--experience ...` line.
 
 ## Starter data bundle
 
