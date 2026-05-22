@@ -254,6 +254,52 @@ per-motion plot labels. Because of that interpolation detail, the plot
 aggregate can differ slightly from the benchmark summary numbers. The headline
 numbers above remain the primary benchmark numbers.
 
+## Live overlay replay
+
+Use `scripts/sim2real_gap/g1_overlay_replay.py` to visually compare existing
+benchmark outputs in the Newton viewer. This is visualization only: it does not
+rerun actuator physics and it does not replace the benchmark metrics. It reads
+the logged real/default/model `state_motor.csv` files and kinematically replays
+multiple fixed-base G1 copies together.
+
+Arm, exact overlay of real + default PD + production GRU:
+
+```bash
+cd /home/vbhavanantha/IsaacLab-Newton-g1-repro
+source /home/vbhavanantha/miniconda3/etc/profile.d/conda.sh
+conda activate env_isaaclab
+
+./isaaclab.sh -p scripts/sim2real_gap/g1_overlay_replay.py \
+  --slice arm \
+  --motion T_A_01_wave_sine \
+  --visualizer newton \
+  --experience /home/vbhavanantha/IsaacLab-Newton-g1-repro/apps/isaaclab.python.kit
+```
+
+If the exact overlay is visually hard to parse, spread the three copies slightly
+along the Y axis:
+
+```bash
+./isaaclab.sh -p scripts/sim2real_gap/g1_overlay_replay.py \
+  --slice arm \
+  --motion T_A_01_wave_sine \
+  --layout spread \
+  --spacing 0.45 \
+  --visualizer newton \
+  --experience /home/vbhavanantha/IsaacLab-Newton-g1-repro/apps/isaaclab.python.kit
+```
+
+Leg overlay uses the same script:
+
+```bash
+./isaaclab.sh -p scripts/sim2real_gap/g1_overlay_replay.py \
+  --slice leg \
+  --motion T_A_01_wave_sine \
+  --layout spread \
+  --visualizer newton \
+  --experience /home/vbhavanantha/IsaacLab-Newton-g1-repro/apps/isaaclab.python.kit
+```
+
 ## Why this is the correct primary benchmark
 
 The G1 experiments were collected on a gantry/fixed-torso setup, not during free
