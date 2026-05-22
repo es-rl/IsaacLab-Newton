@@ -39,8 +39,8 @@ analysis:
   motion_names: "*"
 
 #-------------------------------------------------------------------------------------
-# Actuator model for benchmark joints. SO-101 ships with implicit ImplicitActuator
-# template; customer's CMA-ES sysid produces fitted variants.
+# Actuator model for benchmark joints. The default SO-101 YAML is the balanced
+# 42-train-motion / 50-generation SysID fit used for the handoff.
 actuator:
   model_type: implicit
   yaml_file: so101/so101_implicit.yaml

@@ -205,7 +205,7 @@ sysid against your own SO-101 motor recordings:
 | USD (fixed-base, no free root joint) | `input/robot_models/so101/so101.usd` |
 | Upstream MJCF | `input/robot_models/so101/so101_upstream.xml` |
 | Mesh STLs | `input/robot_models/so101/assets/*.stl` |
-| Actuator template (STS3215 datasheet) | `input/actuator_models/so101/so101_implicit.yaml` |
+| Fitted actuator YAML | `input/actuator_models/so101/so101_implicit.yaml` |
 | Run config | `input/run_configs/so101/so101.yaml` |
 | CMA-ES bounds | `input/run_configs/so101/so101_sysid_bounds.yaml` |
 | SAGE joints config (analysis) | `scripts/sim2real_gap/configs/so101_joints.yaml` |
@@ -331,17 +331,19 @@ python scripts/sysid/run_sysid.py \
 near-flat first generation. For production, use enough generations to confirm
 the best score is still improving and validate on held-out motions afterward.
 
-Historical SO-101 fits on Vaibhav's machine used wider bounds that also
+The handoff branch ships `so101_implicit.yaml` with the balanced
+42-train-motion / 50-generation fit. That fit used wider bounds that also
 optimized `stiffness` and `damping`, plus the upstream Feetech base actuator
 (`effort_limit_sim: 3.35`, `velocity_limit_sim: 30.0`). Do not compare those
-numbers directly against the default clean-repo SO-101 bounds/template, which
-only optimize armature/friction terms and use lower datasheet defaults.
+numbers directly against a fresh conservative fit that only optimizes
+armature/friction terms and uses lower datasheet defaults.
 
 #### 4. Update the actuator YAML
 
-Copy the per-joint values from `best_params.yaml` into
-`input/actuator_models/so101/so101_implicit.yaml`. Each parameter accepts a
-regex-keyed dict — the `.*` template entries become explicit per-joint values:
+For a new fit, copy the per-joint values from `best_params.yaml` into a new
+actuator YAML or intentionally update `input/actuator_models/so101/so101_implicit.yaml`.
+Each parameter accepts a regex-keyed dict; explicit per-joint values should
+use the USD joint names:
 
 ```yaml
 armature:
@@ -357,9 +359,9 @@ dynamic_friction:
   # ... etc.
 ```
 
-`stiffness`, `damping`, `effort_limit_sim`, and `velocity_limit_sim` come
-from the STS3215 datasheet (1.5 N·m stall at 12 V, ~6.28 rad/s no-load).
-Leave these alone unless you have measured otherwise on your own arm.
+The shipped handoff fit includes `stiffness`, `damping`, `armature`,
+`dynamic_friction`, and `viscous_friction`. Preserve the YAML provenance when
+replacing it with a new fit.
 
 #### 5. Tuning the bounds
 

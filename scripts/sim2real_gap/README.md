@@ -198,7 +198,7 @@ analysis:
 
 actuator:
   model_type: implicit
-  yaml_file: so101/so101_implicit.yaml         # the YAML you populated from sysid
+  yaml_file: so101/so101_implicit.yaml         # fitted balanced SysID actuator YAML
 ```
 
 `motion_files` should be either a SAGE-format motion directory
@@ -248,9 +248,9 @@ python scripts/sim2real_gap/run_analysis.py \
 Output goes to `output/sim2real_analysis/metrics/so101/<motion_name>/`:
 per-joint position/velocity/torque comparison plots, a
 `metrics_summary.xlsx` with RMSE / cosine similarity / correlation per
-joint, and a boxplot summary. Compare against the same metrics produced
-from the unfit STS3215 template to quantify the sim-to-real improvement
-delivered by your CMA-ES fit.
+joint, and a boxplot summary. Compare against the same metrics produced from an
+unfitted STS3215 baseline if you need to quantify the sim-to-real improvement
+delivered by a CMA-ES fit.
 
 For a multi-motion folder, report the pooled SAGE RMSE across the held-out
 motions and joints. Do not concatenate motions into one artificial long
@@ -277,10 +277,9 @@ separate drift stress test.
   files. If `event.csv` has `MOTION_END` but not SAGE's expected `DISABLE`
   marker, the benchmark output adds a `DISABLE` row at the `MOTION_END`
   timestamp so analysis can find the scored interval.
-- The shipped `so101_implicit.yaml` is a clean STS3215 template. It is a
-  baseline, not a fitted result. Put fitted armature/friction/lag values
-  in a separate YAML or overwrite the template only after recording the
-  exact provenance.
+- The shipped `so101_implicit.yaml` is the balanced 42-train-motion /
+  50-generation SysID fit used for the SO-101 handoff. Keep new fits in a
+  separate YAML or update the file only with exact provenance.
 
 ---
 

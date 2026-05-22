@@ -109,12 +109,12 @@ Validation method:
 5. Compute pooled RMSE over all validation motions and all 6 SO-101 joints,
    sampled at `0.005 s`.
 
-Important implementation detail: current SO-101 benchmark code loads
-`input/actuator_models/so101/so101_implicit.yaml` directly. For this validation
-we temporarily swapped that file to the upstream baseline, then to the balanced
-fit, ran the two benchmarks, and restored the original YAML afterward. The
-benchmark output folders are the durable record of which parameters were loaded
-in each run.
+Important implementation detail: the handoff branch now keeps the balanced
+42-train / 50-gen fit in `input/actuator_models/so101/so101_implicit.yaml` so
+new SO-101 simulations use the fitted values by default. During the validation
+run we temporarily swapped that file between the upstream baseline and the
+balanced fit; the benchmark output folders are the durable record of which
+parameters were loaded in each run.
 
 Overall held-out results:
 

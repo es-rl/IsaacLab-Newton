@@ -1,14 +1,30 @@
 # SO-101 Newton onboarding
 
-This is the short path for a new user who wants to get started with the
-SO-101 SysID and sim2real benchmark workflow in IsaacLab-Newton.
+This is the short path for a new user who wants to get started with SO-101
+simulation in IsaacLab-Newton. SysID and sim2real benchmarking are optional
+tools on top of that foundation.
 
-Use this as the entry point before reading the deeper investigation note in
+Use this as the entry point before reading the deeper simulation handoff note
+in `docs/so101_simulation_handoff.md` or the SysID investigation note in
 `docs/so101_balanced_sysid.md`.
 
 ## What this workflow does
 
-There are two separate steps:
+For someone who just wants to simulate SO-101, the important pieces are:
+
+- SO-101 USD: `input/robot_models/so101/so101.usd`
+- Fitted actuator YAML: `input/actuator_models/so101/so101_implicit.yaml`
+- Runtime config: `input/run_configs/so101/so101.yaml`
+
+The default `so101_implicit.yaml` is already populated with the balanced
+42-train-motion / 50-generation SysID fit. It is not the zero-friction
+template.
+
+The benchmark/SysID tools are optional. They are useful when you want to check
+or refit actuator behavior against real logs, but they are not required for
+building a pick-and-place scene on top of SO-101.
+
+For actuator validation there are two separate steps:
 
 1. **SysID training**: fit one global SO-101 actuator parameter set from
    training motions.
@@ -58,6 +74,10 @@ If running inside the repo Docker shell, run the same script with
 `python <script> ...` and omit the final `--experience ...` line.
 
 ## Starter data bundle
+
+The starter data bundle is optional. It is only a quick pipeline check for the
+SysID/benchmark tools. A user who only wants to build a pick-and-place task can
+skip this section.
 
 The starter bundle should be unzipped into the repo root so this folder exists:
 

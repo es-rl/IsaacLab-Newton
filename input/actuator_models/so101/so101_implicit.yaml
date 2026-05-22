@@ -3,31 +3,61 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-# SO-101 motor parameters - TEMPLATE for customer sysid.
-# All values are manufacturer defaults from the Feetech STS3215 datasheet
-# (https://www.feetechrc.com/store/p/sts3215.html). Customer's CMA-ES
-# sysid fills in armature, dynamic_friction, viscous_friction.
+# SO-101 motor parameters - balanced SysID fit.
 #
 # Robot: 6-DOF arm + gripper; joints named per USD prim:
 #   Rotation, Pitch, Elbow, Wrist_Pitch, Wrist_Roll, Jaw
+#
+# Source fit:
+#   output/sysid/so101/balanced_historical_bounds_42train_50gen_20260521
+#   42 train motions, 8 held-out validation motions, 50 CMA-ES generations
+#   position-only balanced per-motion loss, best train MSE = 0.0006280504
+#
+# Held-out validation vs upstream Feetech baseline:
+#   position RMSE: 0.045041 -> 0.015612 rad (65.34% reduction)
+#   torque RMSE:   0.615712 -> 0.322481 Nm  (47.62% reduction)
 
-# Effort/velocity limits - STS3215 datasheet
-effort_limit_sim: 1.5          # N-m, datasheet stall torque (12V)
-velocity_limit_sim: 6.28       # rad/s, ~60 RPM no-load speed
+effort_limit_sim: 3.35
+velocity_limit_sim: 30.0
 
-# PD gains - STS3215 internal servo defaults; customer may tune
-stiffness: 4.0                 # kp
-damping: 0.1                   # kd
+stiffness:
+  Rotation: 48.469227
+  Pitch: 45.524723
+  Elbow: 11.299391
+  Wrist_Pitch: 47.66135
+  Wrist_Roll: 66.163048
+  Jaw: 45.479378
 
-# Command transport delay - measure on customer hardware
-motor_lag_ms: 0.0              # ms
+damping:
+  Rotation: 2.500566
+  Pitch: 3.24012
+  Elbow: 0.428969
+  Wrist_Pitch: 3.836192
+  Wrist_Roll: 2.504375
+  Jaw: 2.820747
 
-# Customer's CMA-ES sysid fills in below - initial values are zero/placeholder.
 armature:
-  ".*": 0.0                    # rotor inertia placeholder; sysid bounds [0.0, 0.05]
+  Rotation: 0.079202
+  Pitch: 0.072242
+  Elbow: 0.038962
+  Wrist_Pitch: 0.042249
+  Wrist_Roll: 0.049878
+  Jaw: 0.053242
 
 dynamic_friction:
-  ".*": 0.0                    # Coulomb friction baseline; sysid bounds [0.0, 1.0]
+  Rotation: 0.350446
+  Pitch: 0.228862
+  Elbow: 0.346933
+  Wrist_Pitch: 0.439954
+  Wrist_Roll: 0.118686
+  Jaw: 0.198292
 
 viscous_friction:
-  ".*": 0.0                    # passive damping baseline; sysid bounds [0.0, 1.0]
+  Rotation: 0.951254
+  Pitch: 1.033873
+  Elbow: 0.599379
+  Wrist_Pitch: 0.960546
+  Wrist_Roll: 1.493437
+  Jaw: 0.839063
+
+motor_lag_ms: 0.0

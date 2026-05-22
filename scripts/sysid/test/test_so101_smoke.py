@@ -43,30 +43,63 @@ def test_so101_run_config_loads() -> None:
         assert key in cfg, f"missing top-level key: {key}"
 
 
-def test_so101_actuator_template_loads() -> None:
-    """`so101_implicit.yaml` parses and ships as a clean template (no
-    fitted values)."""
+def test_so101_actuator_sysid_fit_loads() -> None:
+    """`so101_implicit.yaml` parses and ships with the fitted SO-101
+    balanced SysID values."""
     from actuator_models import load_actuator_params
 
     params = load_actuator_params("so101/so101_implicit.yaml")
     assert "stiffness" in params and "damping" in params, (
         "so101_implicit.yaml missing stiffness/damping"
     )
-    # Template must ship with zero friction/armature so customer's CMA-ES
-    # fit is not biased by stale fitted values.
-    for key in ("armature", "dynamic_friction", "viscous_friction"):
-        block = params.get(key, {})
-        if isinstance(block, dict):
-            for joint, value in block.items():
-                assert value == 0.0, (
-                    f"so101_implicit.yaml shipping with non-zero {key}[{joint}]={value} - "
-                    "template must be clean (zero friction/armature)"
-                )
-        else:
-            assert block == 0.0, (
-                f"so101_implicit.yaml shipping with non-zero {key}={block} - "
-                "template must be clean"
-            )
+    assert params["effort_limit_sim"] == 3.35
+    assert params["velocity_limit_sim"] == 30.0
+    assert params["motor_lag_ms"] == 0.0
+
+    expected = {
+        "stiffness": {
+            "Rotation": 48.469227,
+            "Pitch": 45.524723,
+            "Elbow": 11.299391,
+            "Wrist_Pitch": 47.66135,
+            "Wrist_Roll": 66.163048,
+            "Jaw": 45.479378,
+        },
+        "damping": {
+            "Rotation": 2.500566,
+            "Pitch": 3.24012,
+            "Elbow": 0.428969,
+            "Wrist_Pitch": 3.836192,
+            "Wrist_Roll": 2.504375,
+            "Jaw": 2.820747,
+        },
+        "armature": {
+            "Rotation": 0.079202,
+            "Pitch": 0.072242,
+            "Elbow": 0.038962,
+            "Wrist_Pitch": 0.042249,
+            "Wrist_Roll": 0.049878,
+            "Jaw": 0.053242,
+        },
+        "dynamic_friction": {
+            "Rotation": 0.350446,
+            "Pitch": 0.228862,
+            "Elbow": 0.346933,
+            "Wrist_Pitch": 0.439954,
+            "Wrist_Roll": 0.118686,
+            "Jaw": 0.198292,
+        },
+        "viscous_friction": {
+            "Rotation": 0.951254,
+            "Pitch": 1.033873,
+            "Elbow": 0.599379,
+            "Wrist_Pitch": 0.960546,
+            "Wrist_Roll": 1.493437,
+            "Jaw": 0.839063,
+        },
+    }
+    for param_name, values in expected.items():
+        assert params[param_name] == values
 
 
 def test_so101_sysid_bounds_loads() -> None:
