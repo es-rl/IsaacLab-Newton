@@ -4,6 +4,8 @@ This note documents the per-experiment balanced pooled SysID trial for SO-101.
 It is separate from sim2real benchmarking: SysID fits actuator parameters on
 training motions; benchmark/analysis must still be run on held-out motions.
 
+For a coworker-friendly setup path, start with `docs/so101_onboarding.md`.
+
 ## What changed
 
 The old SO-101 training corpus was effectively treated as one long concatenated
