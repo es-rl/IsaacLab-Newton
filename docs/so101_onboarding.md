@@ -146,6 +146,79 @@ output/sim2real_benchmark_so101_smoke/
 output/sim2real_analysis_so101_smoke/
 ```
 
+## Simulating your own SO-101 recording
+
+After the smoke run works, replace the smoke motion with your own recorded
+SO-101 motion. The branch is ready for this workflow; the key requirement is
+that the recording uses the expected SAGE folder format.
+
+Place one recorded motion here:
+
+```text
+input/sysid_data/so101/my_motion/
+├── control.csv
+├── state_motor.csv
+├── joint_list.txt
+└── event.csv              # optional, but useful when available
+```
+
+`joint_list.txt` must use these USD joint names in the same order as the
+position arrays in `control.csv` and `state_motor.csv`:
+
+```text
+Rotation
+Pitch
+Elbow
+Wrist_Pitch
+Wrist_Roll
+Jaw
+```
+
+The CSVs should look like the smoke data:
+
+```text
+control.csv:     type,timestamp,positions
+state_motor.csv: type,timestamp,positions,velocities,torques
+```
+
+Timestamps are in microseconds. Joint positions are in radians. Torques should
+be in N m if you want torque RMSE to be meaningful; if the robot logger reports
+servo current, convert current to torque before treating the values as N m.
+
+Run the benchmark on your motion:
+
+```bash
+./isaaclab.sh -p scripts/sim2real_gap/run_benchmark.py \
+  --robot-name so101 \
+  --motion-files input/sysid_data/so101/my_motion \
+  --motion-name my_motion \
+  --output-folder output/sim2real_benchmark_so101_my_motion \
+  --real-init-pose-sync \
+  --headless \
+  --experience /path/to/IsaacLab-Newton/apps/isaaclab.python.headless.kit
+```
+
+Then analyze it:
+
+```bash
+./isaaclab.sh -p scripts/sim2real_gap/run_analysis.py \
+  --robot-name so101 \
+  --result-folder output/sim2real_benchmark_so101_my_motion \
+  --output-dir output/sim2real_analysis_so101_my_motion \
+  --sample-dt 0.005 \
+  --headless \
+  --experience /path/to/IsaacLab-Newton/apps/isaaclab.python.headless.kit
+```
+
+For a brand-new IsaacLab-Newton user, do this in order:
+
+1. Clone the repo and switch to the SO-101 branch.
+2. Activate the IsaacLab environment.
+3. Unzip and run the smoke bundle exactly as written above.
+4. Copy the smoke folder shape for their own recording.
+5. Run the benchmark and analysis on their own held-out motion.
+6. Only then start fitting SysID parameters.
+
 ## Methodology rules
 
 - Primary validation numbers should use held-out motions, not training motions.
