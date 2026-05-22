@@ -278,7 +278,9 @@ conda activate env_isaaclab
 ```
 
 If the exact overlay is visually hard to parse, spread the three copies slightly
-along the Y axis:
+along the Y axis. In spread mode, the intended left-to-right order from the
+default front camera is `real`, `baseline`, `model/ours`. The Newton viewer may
+replace USD display colors, so use the printed order as the reliable identifier.
 
 ```bash
 ./isaaclab.sh -p scripts/sim2real_gap/g1_overlay_replay.py \

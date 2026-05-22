@@ -315,6 +315,9 @@ class G1OverlaySceneCfg(InteractiveSceneCfg):
 def _layout_positions() -> dict[str, tuple[float, float, float]]:
     if args.layout == "spread":
         return {
+            # Looking from the default front camera, these appear left -> right
+            # as real, baseline, model. This is more reliable than colors in
+            # Newton viewer builds that replace USD display colors.
             "real": (0.0, -args.spacing, 1.5),
             "baseline": (0.0, 0.0, 1.5),
             "model": (0.0, args.spacing, 1.5),
@@ -414,6 +417,10 @@ def main() -> None:
     _log(f"  real:     {real_trace.csv_path}")
     _log(f"  baseline: {baseline_trace.csv_path}")
     _log(f"  model:    {model_trace.csv_path}")
+    if args.layout == "spread":
+        _log("  spread order from left to right: real, baseline, model/ours")
+    else:
+        _log("  overlay order: real, baseline, model/ours at the same base pose")
     _log("  press Ctrl+C in the terminal to stop, or pass --no-loop for one replay")
 
     sim, scene = _make_scene()
