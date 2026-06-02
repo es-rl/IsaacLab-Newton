@@ -1,0 +1,138 @@
+{
+  "created": "2026-05-29",
+  "updated": "2026-05-30",
+  "robot": "H1 arm with gripper",
+  "model_label": "SysID + GRU",
+  "representative_motion": "C04_f0_1-0_5_a0_30",
+  "representative_motion_label": "Right-Arm Chirp Sweep",
+  "benchmark_method": "Held-out test10 per-motion interpolation RMSE. Overall rows average per-motion/per-joint RMSE; per-joint plots report arithmetic mean of each joint's RMSE across the 10 held-out validation motions.",
+  "style": {
+    "bar_plots": "Baseline PD red; SysID + GRU green",
+    "trajectory_reveals": "Real black; Baseline PD red; SysID + GRU blue",
+    "axis_policy": "Joint trajectory reveal stages use fixed per-joint y-limits computed from real + baseline + model.",
+    "png_first": true,
+    "legacy_pdfs_may_exist_in_folder": true
+  },
+  "overall_h1_stats": {
+    "baseline_pd_position_rmse_rad": 0.017178596688382605,
+    "sysid_gru_position_rmse_rad": 0.0109208881096988,
+    "position_reduction_percent": 36.427356041926956,
+    "baseline_pd_torque_rmse_nm": 1.1598088612876774,
+    "sysid_gru_torque_rmse_nm": 0.6780223543022216,
+    "torque_reduction_percent": 41.54016433798863
+  },
+  "representative_motion_metrics": {
+    "baseline_pd_position_rmse_rad": 0.01679262913605923,
+    "sysid_gru_position_rmse_rad": 0.009150038795600153,
+    "position_reduction_percent": 45.511577005222804,
+    "baseline_pd_torque_rmse_nm": 1.2515392845257365,
+    "sysid_gru_torque_rmse_nm": 0.6209723853535327,
+    "torque_reduction_percent": 50.383308536028366
+  },
+  "ee_fk": {
+    "motion": "C04_f0_1-0_5_a0_30",
+    "motion_label": "Right-Arm Chirp Sweep",
+    "xml_path": "/home/vbhavanantha/IsaacLab-Newton/input/robot_models/h1_with_gripper/h1_with_gripper_groundtruth_yawclamped.xml",
+    "ee_body": "right_gripper_link",
+    "joint_order_from_csv": [
+      "right_elbow",
+      "right_shoulder_pitch",
+      "right_shoulder_roll",
+      "right_shoulder_yaw"
+    ],
+    "fk_joint_order": [
+      "right_shoulder_pitch",
+      "right_shoulder_roll",
+      "right_shoulder_yaw",
+      "right_elbow"
+    ],
+    "baseline_pd_ee_rmse_mm": 21.995556171554426,
+    "sysid_gru_ee_rmse_mm": 11.548166041804826,
+    "ee_rmse_reduction_percent": 47.49773112471055,
+    "metric": "sqrt(mean(||p_sim - p_real||^2)) after interpolating FK positions to common timestamps",
+    "caveat": "EE position is FK-derived from logged H1 joints through the local MuJoCo model, not external mocap.",
+    "source_files": {
+      "real_state_motor_csv": "/home/vbhavanantha/IsaacLab-Newton-g1-repro/output/h1_arm_repro_test10_20260521/real/h1_arm_pd_baseline_yawclamped_gripperpos/multijoint_gripper_test10/C04_f0_1-0_5_a0_30/state_motor.csv",
+      "baseline_state_motor_csv": "/home/vbhavanantha/IsaacLab-Newton-g1-repro/output/h1_arm_repro_test10_20260521/sim/h1_arm_pd_baseline_yawclamped_gripperpos/multijoint_gripper_test10/h1_arm_implicit/C04_f0_1-0_5_a0_30/state_motor.csv",
+      "sysid_gru_state_motor_csv": "/home/vbhavanantha/IsaacLab-Newton-g1-repro/output/h1_arm_gru_v28_test10_20260521/sim/h1_arm_v28_lag20_gripperpos_s033/multijoint_gripper_test10/h1_arm_post_velsync_sysid_gen10_lag20/C04_f0_1-0_5_a0_30/state_motor.csv",
+      "joint_list": "/home/vbhavanantha/IsaacLab-Newton-g1-repro/output/h1_arm_repro_test10_20260521/real/h1_arm_pd_baseline_yawclamped_gripperpos/multijoint_gripper_test10/C04_f0_1-0_5_a0_30/joint_list.txt"
+    }
+  },
+  "per_joint_position_rmse_mean_across_validation_motions": {
+    "right_shoulder_pitch": {
+      "baseline_pd_rad": 0.02280759632017501,
+      "sysid_gru_rad": 0.016060606092168035,
+      "reduction_percent": 29.58220644250338
+    },
+    "right_shoulder_roll": {
+      "baseline_pd_rad": 0.023576255394110866,
+      "sysid_gru_rad": 0.009830484435860891,
+      "reduction_percent": 58.30345289559233
+    },
+    "right_shoulder_yaw": {
+      "baseline_pd_rad": 0.013923855330612652,
+      "sysid_gru_rad": 0.009753213511910084,
+      "reduction_percent": 29.953211374820132
+    },
+    "right_elbow": {
+      "baseline_pd_rad": 0.008407147562130814,
+      "sysid_gru_rad": 0.008040392358398051,
+      "reduction_percent": 4.362421392301672
+    }
+  },
+  "per_joint_torque_rmse_mean_across_validation_motions": {
+    "right_shoulder_pitch": {
+      "baseline_pd_nm": 1.4382558336671079,
+      "sysid_gru_nm": 0.9182963173956212,
+      "reduction_percent": 36.1520881125683
+    },
+    "right_shoulder_roll": {
+      "baseline_pd_nm": 1.467871435562231,
+      "sysid_gru_nm": 0.5712576119935077,
+      "reduction_percent": 61.08258542583452
+    },
+    "right_shoulder_yaw": {
+      "baseline_pd_nm": 1.1835007132816564,
+      "sysid_gru_nm": 0.7421558841803352,
+      "reduction_percent": 37.29147132303311
+    },
+    "right_elbow": {
+      "baseline_pd_nm": 0.5494090268431226,
+      "sysid_gru_nm": 0.48041116871439504,
+      "reduction_percent": 12.558559244136545
+    }
+  },
+  "outputs": {
+    "stats_png": "/home/vbhavanantha/Desktop/UnitreeH1/docs/presentation_assets_20260529/h1_before_after_pos_torque_redgreen.png",
+    "per_joint_position_rmse_png": "/home/vbhavanantha/Desktop/UnitreeH1/docs/presentation_assets_20260529/h1_arm_per_joint_position_rmse.png",
+    "per_joint_position_rmse_values_csv": "/home/vbhavanantha/Desktop/UnitreeH1/docs/presentation_assets_20260529/h1_arm_per_joint_position_rmse_values.csv",
+    "per_joint_torque_rmse_png": "/home/vbhavanantha/Desktop/UnitreeH1/docs/presentation_assets_20260529/h1_arm_per_joint_torque_rmse.png",
+    "per_joint_torque_rmse_values_csv": "/home/vbhavanantha/Desktop/UnitreeH1/docs/presentation_assets_20260529/h1_arm_per_joint_torque_rmse_values.csv",
+    "position_reveal_pngs": [
+      "/home/vbhavanantha/Desktop/UnitreeH1/docs/presentation_assets_20260529/h1_C04_f0_1-0_5_a0_30_01_real_only.png",
+      "/home/vbhavanantha/Desktop/UnitreeH1/docs/presentation_assets_20260529/h1_C04_f0_1-0_5_a0_30_02_real_baseline.png",
+      "/home/vbhavanantha/Desktop/UnitreeH1/docs/presentation_assets_20260529/h1_C04_f0_1-0_5_a0_30_03_real_baseline_model.png"
+    ],
+    "torque_reveal_pngs": [
+      "/home/vbhavanantha/Desktop/UnitreeH1/docs/presentation_assets_20260529/h1_C04_f0_1-0_5_a0_30_torque_01_real_only.png",
+      "/home/vbhavanantha/Desktop/UnitreeH1/docs/presentation_assets_20260529/h1_C04_f0_1-0_5_a0_30_torque_02_real_baseline.png",
+      "/home/vbhavanantha/Desktop/UnitreeH1/docs/presentation_assets_20260529/h1_C04_f0_1-0_5_a0_30_torque_03_real_baseline_model.png"
+    ],
+    "ee_3d_reveal_pngs": [
+      "/home/vbhavanantha/Desktop/UnitreeH1/docs/presentation_assets_20260529/h1_C04_f0_1-0_5_a0_30_ee_01_real_only.png",
+      "/home/vbhavanantha/Desktop/UnitreeH1/docs/presentation_assets_20260529/h1_C04_f0_1-0_5_a0_30_ee_02_real_baseline.png",
+      "/home/vbhavanantha/Desktop/UnitreeH1/docs/presentation_assets_20260529/h1_C04_f0_1-0_5_a0_30_ee_03_real_baseline_sysid_gru.png"
+    ],
+    "joint_trajectory_metrics_json": "/home/vbhavanantha/Desktop/UnitreeH1/docs/presentation_assets_20260529/h1_C04_f0_1-0_5_a0_30_joint_trajectory_metrics.json",
+    "ee_metrics_json": "/home/vbhavanantha/Desktop/UnitreeH1/docs/presentation_assets_20260529/h1_C04_f0_1-0_5_a0_30_ee_metrics_so101_style.json"
+  },
+  "source_files": {
+    "real_state_motor_csv": "/home/vbhavanantha/IsaacLab-Newton-g1-repro/output/h1_arm_repro_test10_20260521/real/h1_arm_pd_baseline_yawclamped_gripperpos/multijoint_gripper_test10/C04_f0_1-0_5_a0_30/state_motor.csv",
+    "baseline_state_motor_csv": "/home/vbhavanantha/IsaacLab-Newton-g1-repro/output/h1_arm_repro_test10_20260521/sim/h1_arm_pd_baseline_yawclamped_gripperpos/multijoint_gripper_test10/h1_arm_implicit/C04_f0_1-0_5_a0_30/state_motor.csv",
+    "sysid_gru_state_motor_csv": "/home/vbhavanantha/IsaacLab-Newton-g1-repro/output/h1_arm_gru_v28_test10_20260521/sim/h1_arm_v28_lag20_gripperpos_s033/multijoint_gripper_test10/h1_arm_post_velsync_sysid_gen10_lag20/C04_f0_1-0_5_a0_30/state_motor.csv",
+    "joint_list": "/home/vbhavanantha/IsaacLab-Newton-g1-repro/output/h1_arm_repro_test10_20260521/real/h1_arm_pd_baseline_yawclamped_gripperpos/multijoint_gripper_test10/C04_f0_1-0_5_a0_30/joint_list.txt",
+    "aggregate_metrics_csv": "/home/vbhavanantha/IsaacLab-Newton-g1-repro/output/h1_plots_current/arm_real_pd_lag20sysid_v28gru_labeled/h1_arm_pd_lag20sysid_v28gru_labeled_plot_metrics.csv",
+    "fk_mujoco_xml": "/home/vbhavanantha/IsaacLab-Newton/input/robot_models/h1_with_gripper/h1_with_gripper_groundtruth_yawclamped.xml",
+    "plot_generator": "/home/vbhavanantha/IsaacLab-Newton-g1-viewer/scripts/sim2real_gap/plot_h1_so101_style_assets.py"
+  }
+}

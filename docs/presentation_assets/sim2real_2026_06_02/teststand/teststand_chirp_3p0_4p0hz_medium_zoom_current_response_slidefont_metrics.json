@@ -1,0 +1,11 @@
+{
+  "source_csv": "/home/vbhavanantha/Desktop/newton-teststand/data/testbench_pos9/18_Chirp_3.0-4.0Hz_medium.csv",
+  "zoom_start_s": 40.346,
+  "zoom_end_s": 42.346,
+  "zoom_duration_s": 2.0,
+  "peak_abs_current_time_s": 41.346,
+  "peak_abs_current_A_raw": 5.382868277569041,
+  "current_rms_A_raw_in_zoom": 0.6443567561095677,
+  "torque_peak_abs_Nm_raw_in_zoom": 18.295031220700224,
+  "layout_note": "Slide-font PNG only; no command trace, no peak marker, no direction-change marker lines."
+}

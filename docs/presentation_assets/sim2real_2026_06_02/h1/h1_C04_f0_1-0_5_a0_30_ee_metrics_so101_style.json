@@ -1,0 +1,64 @@
+{
+  "motion": "C04_f0_1-0_5_a0_30",
+  "motion_label": "Right-Arm Chirp Sweep",
+  "xml_path": "/home/vbhavanantha/IsaacLab-Newton/input/robot_models/h1_with_gripper/h1_with_gripper_groundtruth_yawclamped.xml",
+  "ee_body": "right_gripper_link",
+  "joint_order_from_csv": [
+    "right_elbow",
+    "right_shoulder_pitch",
+    "right_shoulder_roll",
+    "right_shoulder_yaw"
+  ],
+  "fk_joint_order": [
+    "right_shoulder_pitch",
+    "right_shoulder_roll",
+    "right_shoulder_yaw",
+    "right_elbow"
+  ],
+  "baseline_pd_ee_rmse_mm": 21.995556171554426,
+  "sysid_gru_ee_rmse_mm": 11.548166041804826,
+  "ee_rmse_reduction_percent": 47.497731124710555,
+  "metric": "sqrt(mean(||p_sim - p_real||^2)) after interpolating FK positions to common timestamps",
+  "caveat": "EE position is FK-derived from logged H1 joints through the local MuJoCo model, not external mocap.",
+  "style": {
+    "real": "#000000",
+    "baseline_pd": "#ff7f0e",
+    "sysid_gru": "#1f77b4",
+    "units": "mm",
+    "png_first": true
+  },
+  "zoom": {
+    "xlim_mm": [
+      -21.42838643200669,
+      624.4295400371901
+    ],
+    "ylim_mm": [
+      -598.8272488173889,
+      -474.7998925374505
+    ],
+    "zlim_mm": [
+      812.0314070376072,
+      1398.0688581503684
+    ]
+  },
+  "source_files": {
+    "real_state_motor_csv": "/home/vbhavanantha/IsaacLab-Newton-g1-repro/output/h1_arm_repro_test10_20260521/real/h1_arm_pd_baseline_yawclamped_gripperpos/multijoint_gripper_test10/C04_f0_1-0_5_a0_30/state_motor.csv",
+    "baseline_state_motor_csv": "/home/vbhavanantha/IsaacLab-Newton-g1-repro/output/h1_arm_repro_test10_20260521/sim/h1_arm_pd_baseline_yawclamped_gripperpos/multijoint_gripper_test10/h1_arm_implicit/C04_f0_1-0_5_a0_30/state_motor.csv",
+    "sysid_gru_state_motor_csv": "/home/vbhavanantha/IsaacLab-Newton-g1-repro/output/h1_arm_gru_v28_test10_20260521/sim/h1_arm_v28_lag20_gripperpos_s033/multijoint_gripper_test10/h1_arm_post_velsync_sysid_gen10_lag20/C04_f0_1-0_5_a0_30/state_motor.csv",
+    "joint_list": "/home/vbhavanantha/IsaacLab-Newton-g1-repro/output/h1_arm_repro_test10_20260521/real/h1_arm_pd_baseline_yawclamped_gripperpos/multijoint_gripper_test10/C04_f0_1-0_5_a0_30/joint_list.txt"
+  },
+  "files": [
+    {
+      "stage": "01_real_only",
+      "png": "/home/vbhavanantha/Desktop/UnitreeH1/docs/presentation_assets_20260529/h1_C04_f0_1-0_5_a0_30_ee_01_real_only.png"
+    },
+    {
+      "stage": "02_real_baseline",
+      "png": "/home/vbhavanantha/Desktop/UnitreeH1/docs/presentation_assets_20260529/h1_C04_f0_1-0_5_a0_30_ee_02_real_baseline.png"
+    },
+    {
+      "stage": "03_real_baseline_sysid_gru",
+      "png": "/home/vbhavanantha/Desktop/UnitreeH1/docs/presentation_assets_20260529/h1_C04_f0_1-0_5_a0_30_ee_03_real_baseline_sysid_gru.png"
+    }
+  ]
+}

@@ -1,0 +1,31 @@
+{
+  "metric": "mean per-joint position RMSE across held-out validation motions",
+  "units": "deg",
+  "source_csv": "/home/vbhavanantha/Desktop/UnitreeH1/docs/presentation_assets_20260529/h1_arm_per_joint_position_rmse_values.csv",
+  "output_png": "/home/vbhavanantha/Desktop/UnitreeH1/docs/presentation_assets_20260529/h1_arm_per_joint_position_rmse.png",
+  "joints": [
+    "Shoulder Pitch",
+    "Shoulder Roll",
+    "Shoulder Yaw",
+    "Elbow"
+  ],
+  "baseline_pd": [
+    1.3067790099841352,
+    1.3508199308050939,
+    0.7977781449948385,
+    0.4816940730537947
+  ],
+  "sysid_gru": [
+    0.9202049455033264,
+    0.563245268743873,
+    0.5588179709224155,
+    0.4606805477654467
+  ],
+  "percent_reduction": [
+    29.58220644250338,
+    58.30345289559233,
+    29.953211374820132,
+    4.362421392301672
+  ],
+  "num_validation_motions": 10
+}

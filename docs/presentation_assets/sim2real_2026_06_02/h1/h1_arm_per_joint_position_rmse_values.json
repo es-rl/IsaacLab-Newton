@@ -1,0 +1,34 @@
+[
+  {
+    "joint": "right_shoulder_pitch",
+    "joint_label": "Shoulder Pitch",
+    "baseline_pd_position_rmse_rad": 0.02280759632017501,
+    "sysid_gru_position_rmse_rad": 0.016060606092168035,
+    "reduction_percent": 29.58220644250338,
+    "num_validation_motions": 10
+  },
+  {
+    "joint": "right_shoulder_roll",
+    "joint_label": "Shoulder Roll",
+    "baseline_pd_position_rmse_rad": 0.023576255394110866,
+    "sysid_gru_position_rmse_rad": 0.009830484435860891,
+    "reduction_percent": 58.30345289559233,
+    "num_validation_motions": 10
+  },
+  {
+    "joint": "right_shoulder_yaw",
+    "joint_label": "Shoulder Yaw",
+    "baseline_pd_position_rmse_rad": 0.013923855330612652,
+    "sysid_gru_position_rmse_rad": 0.009753213511910084,
+    "reduction_percent": 29.953211374820132,
+    "num_validation_motions": 10
+  },
+  {
+    "joint": "right_elbow",
+    "joint_label": "Elbow",
+    "baseline_pd_position_rmse_rad": 0.008407147562130814,
+    "sysid_gru_position_rmse_rad": 0.008040392358398051,
+    "reduction_percent": 4.362421392301672,
+    "num_validation_motions": 10
+  }
+]

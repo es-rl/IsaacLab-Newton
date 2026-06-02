@@ -1,0 +1,42 @@
+[
+  {
+    "joint": "right_shoulder_pitch",
+    "joint_label": "Shoulder Pitch",
+    "baseline_pd_position_rmse_rad": 0.017886007065895576,
+    "seed48_full_torque_gru_position_rmse_rad": 0.009741961574458483,
+    "reduction_percent": 45.53305531767277,
+    "num_validation_motions": 10,
+    "baseline_pd_position_rmse_deg": 1.0247927172169855,
+    "seed48_full_torque_gru_position_rmse_deg": 0.5581732823950936
+  },
+  {
+    "joint": "right_shoulder_roll",
+    "joint_label": "Shoulder Roll",
+    "baseline_pd_position_rmse_rad": 0.02427617073466651,
+    "seed48_full_torque_gru_position_rmse_rad": 0.01673474168570923,
+    "reduction_percent": 31.065150807281466,
+    "num_validation_motions": 10,
+    "baseline_pd_position_rmse_deg": 1.390922125835394,
+    "seed48_full_torque_gru_position_rmse_deg": 0.9588300698327836
+  },
+  {
+    "joint": "right_shoulder_yaw",
+    "joint_label": "Shoulder Yaw",
+    "baseline_pd_position_rmse_rad": 0.014942092387221903,
+    "seed48_full_torque_gru_position_rmse_rad": 0.0067682642002939,
+    "reduction_percent": 54.70337068667874,
+    "num_validation_motions": 10,
+    "baseline_pd_position_rmse_deg": 0.8561188308823721,
+    "seed48_full_torque_gru_position_rmse_deg": 0.3877929733063277
+  },
+  {
+    "joint": "right_elbow",
+    "joint_label": "Elbow",
+    "baseline_pd_position_rmse_rad": 0.018870132041423994,
+    "seed48_full_torque_gru_position_rmse_rad": 0.008155715247158883,
+    "reduction_percent": 56.77976587945789,
+    "num_validation_motions": 10,
+    "baseline_pd_position_rmse_deg": 1.0811789248281791,
+    "seed48_full_torque_gru_position_rmse_deg": 0.46728806257269906
+  }
+]

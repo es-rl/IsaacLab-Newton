@@ -1,0 +1,40 @@
+{
+  "created": "2026-05-29",
+  "updated": "2026-05-31",
+  "plot": "/home/vbhavanantha/Desktop/newton-teststand/benchmark_results/plots_20260529_default_vs_sysid_fixed10s/teststand_sysid_pos_torque_before_after_presentation.png",
+  "summary_source": "/home/vbhavanantha/Desktop/newton-teststand/benchmark_results/plots_20260529_default_vs_sysid_fixed10s/default_vs_sysid_fixed10s_summary.json",
+  "style": {
+    "bar_plots": "Baseline PD orange; SysID blue",
+    "subtitle": "Lower RMSE is better",
+    "position_units": "deg",
+    "torque_units": "Nm",
+    "gridlines": false,
+    "png_first": true
+  },
+  "items": [
+    {
+      "name": "Position RMSE",
+      "unit": "deg",
+      "baseline_label": "Baseline PD",
+      "model_label": "SysID",
+      "baseline": 4.393682903221748,
+      "model": 3.690677625784369,
+      "baseline_rad": 0.07668423294980288,
+      "model_rad": 0.06441447619962441,
+      "reduction": 16.000364453290146,
+      "fmt": "{:.2f}"
+    },
+    {
+      "name": "Torque RMSE",
+      "unit": "Nm",
+      "baseline_label": "Baseline PD",
+      "model_label": "SysID",
+      "baseline": 4.140115214356088,
+      "model": 2.3305155173916186,
+      "reduction": 43.7089212080277,
+      "fmt": "{:.3f}"
+    }
+  ],
+  "trim_rule": "fixed first 10 seconds excluded from every motion",
+  "n_motions": 10
+}

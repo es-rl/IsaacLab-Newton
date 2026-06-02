@@ -1,0 +1,31 @@
+{
+  "metric": "mean per-joint torque RMSE across held-out validation motions",
+  "units": "Nm",
+  "source_csv": "/home/vbhavanantha/Desktop/UnitreeH1/docs/presentation_assets_20260529/h1_arm_per_joint_torque_rmse_values.csv",
+  "output_png": "/home/vbhavanantha/Desktop/UnitreeH1/docs/presentation_assets_20260529/h1_arm_per_joint_torque_rmse.png",
+  "joints": [
+    "Shoulder Pitch",
+    "Shoulder Roll",
+    "Shoulder Yaw",
+    "Elbow"
+  ],
+  "baseline_pd": [
+    1.4382558336671079,
+    1.467871435562231,
+    1.1835007132816564,
+    0.5494090268431226
+  ],
+  "sysid_gru": [
+    0.9182963173956212,
+    0.5712576119935077,
+    0.7421558841803352,
+    0.48041116871439504
+  ],
+  "percent_reduction": [
+    36.1520881125683,
+    61.08258542583452,
+    37.29147132303311,
+    12.558559244136545
+  ],
+  "num_validation_motions": 10
+}

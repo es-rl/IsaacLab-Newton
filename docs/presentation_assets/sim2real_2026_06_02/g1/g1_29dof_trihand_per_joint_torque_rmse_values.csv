@@ -1,0 +1,5 @@
+joint,joint_label,baseline_pd_torque_rmse_nm,seed48_full_torque_gru_torque_rmse_nm,reduction_percent,num_validation_motions
+right_shoulder_pitch,Shoulder Pitch,0.5960150868914913,0.40597655805991967,31.884852080291292,10
+right_shoulder_roll,Shoulder Roll,0.9902848228916648,0.6753044136034454,31.807052073005224,10
+right_shoulder_yaw,Shoulder Yaw,0.47739840369656683,0.27868117873281373,41.62502920517875,10
+right_elbow,Elbow,0.5923961424906764,0.35700017573872456,39.736242333086544,10

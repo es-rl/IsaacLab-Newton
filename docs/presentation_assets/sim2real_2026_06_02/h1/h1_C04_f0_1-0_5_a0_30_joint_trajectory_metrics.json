@@ -1,0 +1,31 @@
+{
+  "motion": "C04_f0_1-0_5_a0_30",
+  "motion_label": "Right-Arm Chirp Sweep",
+  "scored_joints": [
+    "right_shoulder_pitch",
+    "right_shoulder_roll",
+    "right_shoulder_yaw",
+    "right_elbow"
+  ],
+  "num_validation_motions": 11,
+  "overall_baseline_position_rmse_rad": 0.017178596688382605,
+  "overall_model_position_rmse_rad": 0.0109208881096988,
+  "overall_position_reduction_percent": 36.427356041926956,
+  "overall_baseline_torque_rmse_nm": 1.1598088612876774,
+  "overall_model_torque_rmse_nm": 0.6780223543022216,
+  "overall_torque_reduction_percent": 41.54016433798863,
+  "motion_baseline_position_rmse_rad": 0.01679262913605923,
+  "motion_model_position_rmse_rad": 0.009150038795600153,
+  "motion_position_reduction_percent": 45.511577005222804,
+  "motion_baseline_torque_rmse_nm": 1.2515392845257365,
+  "motion_model_torque_rmse_nm": 0.6209723853535327,
+  "motion_torque_reduction_percent": 50.383308536028366,
+  "metric": "Per-motion RMSE after interpolation to common timestamps; plotted trajectories use logged native timestamps.",
+  "source_files": {
+    "real_state_motor_csv": "/home/vbhavanantha/IsaacLab-Newton-g1-repro/output/h1_arm_repro_test10_20260521/real/h1_arm_pd_baseline_yawclamped_gripperpos/multijoint_gripper_test10/C04_f0_1-0_5_a0_30/state_motor.csv",
+    "baseline_state_motor_csv": "/home/vbhavanantha/IsaacLab-Newton-g1-repro/output/h1_arm_repro_test10_20260521/sim/h1_arm_pd_baseline_yawclamped_gripperpos/multijoint_gripper_test10/h1_arm_implicit/C04_f0_1-0_5_a0_30/state_motor.csv",
+    "sysid_gru_state_motor_csv": "/home/vbhavanantha/IsaacLab-Newton-g1-repro/output/h1_arm_gru_v28_test10_20260521/sim/h1_arm_v28_lag20_gripperpos_s033/multijoint_gripper_test10/h1_arm_post_velsync_sysid_gen10_lag20/C04_f0_1-0_5_a0_30/state_motor.csv",
+    "joint_list": "/home/vbhavanantha/IsaacLab-Newton-g1-repro/output/h1_arm_repro_test10_20260521/real/h1_arm_pd_baseline_yawclamped_gripperpos/multijoint_gripper_test10/C04_f0_1-0_5_a0_30/joint_list.txt",
+    "summary_csv": "/home/vbhavanantha/IsaacLab-Newton-g1-repro/output/h1_plots_current/arm_real_pd_lag20sysid_v28gru_labeled/h1_arm_pd_lag20sysid_v28gru_labeled_plot_metrics.csv"
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "motion": "H_F_06_multi_chirp",
+  "ee_body": "right_palm_link",
+  "fk_usd": "/home/vbhavanantha/unitree_model/G1/29dof/usd/g1_29dof_rev_1_0/g1_29dof_rev_1_0_tri_hand_closed.usda",
+  "baseline_pd_ee_rmse_mm": 12.637580931564003,
+  "seed48_full_torque_gru_ee_rmse_mm": 8.068275072720695,
+  "ee_rmse_reduction_percent": 36.156491369569565,
+  "metric": "sqrt(mean(||p_sim - p_real||^2)) after interpolating FK positions to common timestamps",
+  "caveat": "EE position is FK-derived from logged 29-DOF tri-hand joints, not external mocap.",
+  "source_files": {
+    "real_state_motor_csv": "/home/vbhavanantha/Desktop/UnitreeG1/data/experiments/presentation_H_F_06_multi_chirp_botharms_20260527_141707/state_motor.csv",
+    "baseline_state_motor_csv": "/home/vbhavanantha/IsaacLab-Newton-g1-viewer/output/g1_29dof_trihand_10motion_default_pd/sim/g1_29dof_right_arm_trihand_benchmark_default_pd/custom/g1_29dof_arm_implicit/H_F_06_multi_chirp/state_motor.csv",
+    "seed48_full_torque_gru_state_motor_csv": "/home/vbhavanantha/IsaacLab-Newton-g1-viewer/output/g1_29dof_trihand_10motion_seed48/sim/g1_29dof_right_arm_trihand_benchmark_fulltorque_optuna_v2_row10_seed48/custom/g1_29dof_arm_no_pd/H_F_06_multi_chirp/state_motor.csv",
+    "joint_list": "/home/vbhavanantha/Desktop/UnitreeG1/data/experiments/presentation_H_F_06_multi_chirp_botharms_20260527_141707/joint_list.txt"
+  }
+}

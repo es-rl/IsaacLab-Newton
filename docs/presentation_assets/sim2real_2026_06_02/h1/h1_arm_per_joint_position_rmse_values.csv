@@ -1,0 +1,5 @@
+joint,joint_label,baseline_pd_position_rmse_rad,sysid_gru_position_rmse_rad,reduction_percent,num_validation_motions
+right_shoulder_pitch,Shoulder Pitch,0.02280759632017501,0.016060606092168035,29.58220644250338,10
+right_shoulder_roll,Shoulder Roll,0.023576255394110866,0.009830484435860891,58.30345289559233,10
+right_shoulder_yaw,Shoulder Yaw,0.013923855330612652,0.009753213511910084,29.953211374820132,10
+right_elbow,Elbow,0.008407147562130814,0.008040392358398051,4.362421392301672,10

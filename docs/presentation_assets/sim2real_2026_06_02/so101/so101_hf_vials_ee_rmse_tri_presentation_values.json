@@ -1,0 +1,13 @@
+{
+  "source": "/home/vbhavanantha/Desktop/Lerobot SysID/sysid/ee_analysis/original_no_camera/hf_vials_ee_rmse.json",
+  "metric": "Cartesian end-effector RMSE",
+  "units": "mm",
+  "num_episodes": 310,
+  "baseline_pd_mean_mm": 16.40300314006566,
+  "sysid_mean_mm": 6.313556863614952,
+  "percent_reduction": 61.50975032008876,
+  "baseline_pd_median_mm": 15.240683269686542,
+  "sysid_median_mm": 5.319872796841436,
+  "baseline_pd_max_mm": 76.74775988270129,
+  "sysid_max_mm": 22.32087554753704
+}

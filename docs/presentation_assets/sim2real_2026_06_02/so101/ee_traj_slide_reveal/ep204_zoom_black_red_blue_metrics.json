@@ -1,0 +1,47 @@
+{
+  "real_csv": "/home/vbhavanantha/Desktop/Lerobot SysID/sysid/data/hf_vials_310eps_sage/ep204/state_motor.csv",
+  "baseline_csv": "/home/vbhavanantha/Desktop/Lerobot SysID/output/hf_vials_bench/sim/so101/custom/so101_upstream/ep204/state_motor.csv",
+  "sysid_csv": "/home/vbhavanantha/Desktop/Lerobot SysID/output/hf_vials_bench/sim/so101/custom/so101_implicit/ep204/state_motor.csv",
+  "stride": 5,
+  "units": "mm",
+  "colors": {
+    "real": "black",
+    "baseline": "red",
+    "sysid": "blue"
+  },
+  "zoom": {
+    "xlim_mm": [
+      155.85269063711166,
+      323.5042241215706
+    ],
+    "ylim_mm": [
+      -221.92177653312683,
+      142.5204622745514
+    ],
+    "zlim_mm": [
+      56.08340069651604,
+      255.6601120531559
+    ],
+    "padding_rule": "7% of per-axis range, minimum 6 mm"
+  },
+  "metrics": {
+    "baseline_rmse_mm": 14.73061736899585,
+    "sysid_rmse_mm": 5.320875754094087,
+    "improvement_pct": 63.87880004749048
+  },
+  "files": [
+    {
+      "stage": "01_real_only",
+      "png": "/home/vbhavanantha/Desktop/Lerobot SysID/docs/ee_traj_slide_reveal/ep204_01_real_only.png"
+    },
+    {
+      "stage": "02_real_baseline",
+      "png": "/home/vbhavanantha/Desktop/Lerobot SysID/docs/ee_traj_slide_reveal/ep204_02_real_baseline.png"
+    },
+    {
+      "stage": "03_real_baseline_sysid",
+      "png": "/home/vbhavanantha/Desktop/Lerobot SysID/docs/ee_traj_slide_reveal/ep204_03_real_baseline_sysid.png"
+    }
+  ],
+  "layout_note": "Y axis label padding increased to avoid overlap with Y tick labels."
+}

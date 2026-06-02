@@ -1,0 +1,37 @@
+{
+  "source": "/home/vbhavanantha/Desktop/Lerobot SysID/docs/handover_log.md",
+  "metric": "mean per-joint position RMSE across 8 held-out validation motions",
+  "units": "deg",
+  "joints": [
+    "Rotation",
+    "Pitch",
+    "Elbow",
+    "Wrist Pitch",
+    "Wrist Roll",
+    "Jaw"
+  ],
+  "baseline_pd": [
+    1.85,
+    4.02,
+    4.33,
+    3.08,
+    2.51,
+    2.56
+  ],
+  "sysid": [
+    1.26,
+    1.4,
+    2.34,
+    1.5,
+    1.41,
+    1.22
+  ],
+  "percent_reduction": [
+    31.891891891891895,
+    65.17412935323384,
+    45.95842956120092,
+    51.298701298701296,
+    43.82470119521912,
+    52.34375
+  ]
+}

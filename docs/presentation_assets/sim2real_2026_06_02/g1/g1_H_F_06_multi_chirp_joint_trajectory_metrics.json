@@ -1,0 +1,25 @@
+{
+  "motion": "H_F_06_multi_chirp",
+  "motion_label": "Right-Arm Multi-Joint Chirp",
+  "scored_joints": [
+    "right_shoulder_pitch",
+    "right_shoulder_roll",
+    "right_shoulder_yaw",
+    "right_elbow"
+  ],
+  "baseline_position_rmse_rad": 0.01753289975780342,
+  "seed48_position_rmse_rad": 0.010849825775314932,
+  "position_reduction_percent": 38.11733412502989,
+  "baseline_torque_rmse_nm": 0.656191448500623,
+  "seed48_torque_rmse_nm": 0.43898727013081856,
+  "torque_reduction_percent": 33.100732852601055,
+  "metric_scope": "right4_primary",
+  "metric": "Per-motion RMSE after interpolation to common timestamps; plotted trajectories use the logged native timestamps.",
+  "source_files": {
+    "real_state_motor_csv": "/home/vbhavanantha/Desktop/UnitreeG1/data/experiments/presentation_H_F_06_multi_chirp_botharms_20260527_141707/state_motor.csv",
+    "baseline_state_motor_csv": "/home/vbhavanantha/IsaacLab-Newton-g1-viewer/output/g1_29dof_trihand_10motion_default_pd/sim/g1_29dof_right_arm_trihand_benchmark_default_pd/custom/g1_29dof_arm_implicit/H_F_06_multi_chirp/state_motor.csv",
+    "seed48_full_torque_gru_state_motor_csv": "/home/vbhavanantha/IsaacLab-Newton-g1-viewer/output/g1_29dof_trihand_10motion_seed48/sim/g1_29dof_right_arm_trihand_benchmark_fulltorque_optuna_v2_row10_seed48/custom/g1_29dof_arm_no_pd/H_F_06_multi_chirp/state_motor.csv",
+    "joint_list": "/home/vbhavanantha/Desktop/UnitreeG1/data/experiments/presentation_H_F_06_multi_chirp_botharms_20260527_141707/joint_list.txt",
+    "summary_csv": "/home/vbhavanantha/IsaacLab-Newton-g1-viewer/output/g1_29dof_trihand_10motion_results/g1_29dof_trihand_10motion_summary.csv"
+  }
+}

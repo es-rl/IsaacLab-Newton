@@ -1,0 +1,102 @@
+{
+  "created": "2026-05-29",
+  "robot": "G1 29-DOF tri-hand benchmark",
+  "model_label": "SysID + GRU",
+  "representative_motion": "H_F_06_multi_chirp",
+  "benchmark_method": "Correct-robot G1 29-DOF tri-hand benchmark; right 4 arm joints scored; sim interpolated to real timestamps; OVERALL rows from 10-motion summary CSV. Per-joint plot reports arithmetic mean of each joint's RMSE across the 10 validation motions.",
+  "source_files": {
+    "metrics_csv": "/home/vbhavanantha/IsaacLab-Newton-g1-viewer/output/g1_29dof_trihand_10motion_results/g1_29dof_trihand_10motion_summary.csv",
+    "joint_metrics_csv": "/home/vbhavanantha/IsaacLab-Newton-g1-viewer/output/g1_29dof_trihand_10motion_results/g1_29dof_trihand_10motion_joint_metrics.csv",
+    "real_state_motor_csv": "/home/vbhavanantha/Desktop/UnitreeG1/data/experiments/presentation_H_F_06_multi_chirp_botharms_20260527_141707/state_motor.csv",
+    "baseline_state_motor_csv": "/home/vbhavanantha/IsaacLab-Newton-g1-viewer/output/g1_29dof_trihand_10motion_default_pd/sim/g1_29dof_right_arm_trihand_benchmark_default_pd/custom/g1_29dof_arm_implicit/H_F_06_multi_chirp/state_motor.csv",
+    "seed48_full_torque_gru_state_motor_csv": "/home/vbhavanantha/IsaacLab-Newton-g1-viewer/output/g1_29dof_trihand_10motion_seed48/sim/g1_29dof_right_arm_trihand_benchmark_fulltorque_optuna_v2_row10_seed48/custom/g1_29dof_arm_no_pd/H_F_06_multi_chirp/state_motor.csv",
+    "joint_list": "/home/vbhavanantha/Desktop/UnitreeG1/data/experiments/presentation_H_F_06_multi_chirp_botharms_20260527_141707/joint_list.txt",
+    "g1_fk_usd": "/home/vbhavanantha/unitree_model/G1/29dof/usd/g1_29dof_rev_1_0/g1_29dof_rev_1_0_tri_hand_closed.usda",
+    "so101_style_plot_generator": "/home/vbhavanantha/IsaacLab-Newton-g1-viewer/scripts/sim2real_gap/plot_g1_29dof_trihand_so101_style_assets.py"
+  },
+  "overall_stats": {
+    "baseline_pd_position_rmse_rad": 0.020412284610628134,
+    "seed48_full_torque_gru_position_rmse_rad": 0.011926557146684292,
+    "position_reduction_percent": 41.57166934428079,
+    "baseline_pd_torque_rmse_nm": 0.7423534659699096,
+    "seed48_full_torque_gru_torque_rmse_nm": 0.48628236714787587,
+    "torque_reduction_percent": 34.49449764304236
+  },
+  "representative_motion_metrics": {
+    "baseline_pd_position_rmse_rad": 0.01753289975780342,
+    "seed48_full_torque_gru_position_rmse_rad": 0.010849825775314932,
+    "position_reduction_percent": 38.11733412502989,
+    "baseline_pd_torque_rmse_nm": 0.656191448500623,
+    "seed48_full_torque_gru_torque_rmse_nm": 0.43898727013081856,
+    "torque_reduction_percent": 33.100732852601055
+  },
+  "ee_fk": {
+    "ee_body": "right_palm_link",
+    "metric": "sqrt(mean(||p_sim - p_real||^2)) in mm after interpolating FK positions to common timestamps",
+    "baseline_pd_ee_rmse_mm": 12.637580931564003,
+    "seed48_full_torque_gru_ee_rmse_mm": 8.068275072720695,
+    "ee_rmse_reduction_percent": 36.156491369569565,
+    "caveat": "EE position is FK-derived from logged 29-DOF tri-hand arm joints through the local G1 29-DOF tri-hand USD. It is not an independent external motion-capture measurement."
+  },
+  "per_joint_position_rmse_mean_across_validation_motions": {
+    "right_shoulder_pitch": {
+      "baseline_pd_rad": 0.017886007065895576,
+      "seed48_full_torque_gru_rad": 0.009741961574458483,
+      "reduction_percent": 45.53305531767277
+    },
+    "right_shoulder_roll": {
+      "baseline_pd_rad": 0.02427617073466651,
+      "seed48_full_torque_gru_rad": 0.01673474168570923,
+      "reduction_percent": 31.065150807281466
+    },
+    "right_shoulder_yaw": {
+      "baseline_pd_rad": 0.014942092387221903,
+      "seed48_full_torque_gru_rad": 0.0067682642002939,
+      "reduction_percent": 54.70337068667874
+    },
+    "right_elbow": {
+      "baseline_pd_rad": 0.018870132041423994,
+      "seed48_full_torque_gru_rad": 0.008155715247158883,
+      "reduction_percent": 56.77976587945789
+    }
+  },
+  "per_joint_torque_rmse_mean_across_validation_motions": {
+    "right_shoulder_pitch": {
+      "baseline_pd_nm": 0.5960150868914913,
+      "seed48_full_torque_gru_nm": 0.40597655805991967,
+      "reduction_percent": 31.884852080291292
+    },
+    "right_shoulder_roll": {
+      "baseline_pd_nm": 0.9902848228916648,
+      "seed48_full_torque_gru_nm": 0.6753044136034454,
+      "reduction_percent": 31.807052073005224
+    },
+    "right_shoulder_yaw": {
+      "baseline_pd_nm": 0.47739840369656683,
+      "seed48_full_torque_gru_nm": 0.27868117873281373,
+      "reduction_percent": 41.62502920517875
+    },
+    "right_elbow": {
+      "baseline_pd_nm": 0.5923961424906764,
+      "seed48_full_torque_gru_nm": 0.35700017573872456,
+      "reduction_percent": 39.736242333086544
+    }
+  },
+  "outputs": {
+    "stats_png": "/home/vbhavanantha/Desktop/UnitreeG1/docs/presentation_assets_20260529/g1_arm_before_after_pos_torque_redgreen.png",
+    "stats_pdf": "/home/vbhavanantha/Desktop/UnitreeG1/docs/presentation_assets_20260529/g1_arm_before_after_pos_torque_redgreen.pdf",
+    "per_joint_position_rmse_png": "/home/vbhavanantha/Desktop/UnitreeG1/docs/presentation_assets_20260529/g1_29dof_trihand_per_joint_position_rmse.png",
+    "per_joint_position_rmse_values_csv": "/home/vbhavanantha/Desktop/UnitreeG1/docs/presentation_assets_20260529/g1_29dof_trihand_per_joint_position_rmse_values.csv",
+    "per_joint_position_rmse_values_json": "/home/vbhavanantha/Desktop/UnitreeG1/docs/presentation_assets_20260529/g1_29dof_trihand_per_joint_position_rmse_values.json",
+    "per_joint_torque_rmse_png": "/home/vbhavanantha/Desktop/UnitreeG1/docs/presentation_assets_20260529/g1_29dof_trihand_per_joint_torque_rmse.png",
+    "per_joint_torque_rmse_values_csv": "/home/vbhavanantha/Desktop/UnitreeG1/docs/presentation_assets_20260529/g1_29dof_trihand_per_joint_torque_rmse_values.csv",
+    "per_joint_torque_rmse_values_json": "/home/vbhavanantha/Desktop/UnitreeG1/docs/presentation_assets_20260529/g1_29dof_trihand_per_joint_torque_rmse_values.json",
+    "position_final_png": "/home/vbhavanantha/Desktop/UnitreeG1/docs/presentation_assets_20260529/g1_H_F_06_multi_chirp_03_real_baseline_fulltorque_gru.png",
+    "torque_final_png": "/home/vbhavanantha/Desktop/UnitreeG1/docs/presentation_assets_20260529/g1_H_F_06_multi_chirp_torque_03_real_baseline_fulltorque_gru.png",
+    "ee_3d_real_only_png": "/home/vbhavanantha/Desktop/UnitreeG1/docs/presentation_assets_20260529/g1_H_F_06_multi_chirp_ee_01_real_only.png",
+    "ee_3d_real_baseline_png": "/home/vbhavanantha/Desktop/UnitreeG1/docs/presentation_assets_20260529/g1_H_F_06_multi_chirp_ee_02_real_baseline.png",
+    "ee_3d_final_png": "/home/vbhavanantha/Desktop/UnitreeG1/docs/presentation_assets_20260529/g1_H_F_06_multi_chirp_ee_03_real_baseline_fulltorque_gru.png",
+    "ee_3d_metrics_json": "/home/vbhavanantha/Desktop/UnitreeG1/docs/presentation_assets_20260529/g1_H_F_06_multi_chirp_ee_metrics_so101_style.json",
+    "ee_xyz_final_png": "/home/vbhavanantha/Desktop/UnitreeG1/docs/presentation_assets_20260529/g1_H_F_06_multi_chirp_ee_xyz_03_real_baseline_fulltorque_gru.png"
+  }
+}
