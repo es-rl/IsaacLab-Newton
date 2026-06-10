@@ -41,7 +41,7 @@ from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
 from isaaclab.sim import SimulationCfg, SimulationContext
 from isaaclab.utils import configclass
 
-from isaaclab_assets.robots.unitree import H1_MINIMAL_CFG
+from isaaclab_assets.robots.unitree import G1_MINIMAL_CFG, H1_MINIMAL_CFG
 
 # Local USD assets (avoids dependency on cloud-hosted Omniverse Nucleus server)
 _H1_LOCAL_USD = os.path.abspath(
@@ -613,6 +613,248 @@ def _patch_implicit_with_hybrid_residual(actuator, network_file, robot, sysid_st
 
 
 # ---------------------------------------------------------------------------
+# G1 production full-torque GRU deployment
+# ---------------------------------------------------------------------------
+
+_G1_SYSID_MJCF_PATH = os.path.expanduser(
+    "~/.cache/newton/newton-assets_unitree_g1_308a72cd/unitree_g1/mjcf/g1_23dof.xml"
+)
+_G1_SYSID_YAML = os.path.join(os.path.dirname(__file__), "../../input/actuator_models/g1/g1_arm_sysid_full.yaml")
+_G1_SYSID_RUN_CFG = os.path.join(
+    os.path.dirname(__file__),
+    "../../input/run_configs/g1_right_arm_full_sysid/g1_right_arm_full_sysid.yaml",
+)
+_G1_ARM_JOINT_NAMES = [
+    "right_shoulder_pitch_joint",
+    "right_shoulder_roll_joint",
+    "right_shoulder_yaw_joint",
+    "right_elbow_pitch_joint",
+]
+_G1_ARM_QPOS_INDICES = [25, 26, 27, 28]
+_G1_ARM_DOF_INDICES = [24, 25, 26, 27]
+
+
+def _load_g1_sysid_mujoco_model():
+    """Load the G1 SysID MuJoCo model used for the GRU qfrc_bias feature."""
+    import mujoco as _mj
+    import yaml as _yaml
+
+    mjm = _mj.MjModel.from_xml_path(_G1_SYSID_MJCF_PATH)
+    mjm.opt.disableflags |= _mj.mjtDisableBit.mjDSBL_CONTACT
+
+    with open(_G1_SYSID_YAML) as f:
+        sysid = _yaml.safe_load(f) or {}
+
+    key_to_arm_idx = {
+        "shoulder_pitch": 0,
+        "shoulder_roll": 1,
+        "shoulder_yaw": 2,
+        "elbow": 3,
+    }
+    for key, val in (sysid.get("armature") or {}).items():
+        for pattern, idx in key_to_arm_idx.items():
+            if pattern in key:
+                mjm.dof_armature[_G1_ARM_DOF_INDICES[idx]] = float(val)
+                break
+
+    with open(_G1_SYSID_RUN_CFG) as f:
+        run_cfg = _yaml.safe_load(f) or {}
+    for body_name, override in (run_cfg.get("mass_overrides") or {}).items():
+        body_id = _mj.mj_name2id(mjm, _mj.mjtObj.mjOBJ_BODY, body_name)
+        if body_id >= 0:
+            mjm.body_mass[body_id] += float(override["delta_mass"])
+
+    return mjm
+
+
+def _patch_g1_fulltorque_enriched(actuator, robot, model_path: str, stats_path: str):
+    """Patch the G1 arm actuator with the production 24-feature full-torque GRU.
+
+    Feature order matches the production checkpoint:
+    [q, position_error, velocity, SDK_PD_hint, qfrc_bias, previous_torque].
+    The actuator YAML must set kp=0/kd=0 so the GRU torque replaces solver PD.
+    """
+    import types
+
+    import mujoco as _mj
+
+    device = actuator._device
+    num_joints = len(_G1_ARM_JOINT_NAMES)
+    num_envs = int(actuator._num_envs)
+
+    model = torch.jit.load(model_path, map_location=device).eval()
+    with open(stats_path) as f:
+        stats = json.load(f)
+    mean_t = torch.tensor(stats["mean"], dtype=torch.float32, device=device)
+    std_t = torch.tensor(stats["std"], dtype=torch.float32, device=device)
+
+    joint_indices = [robot.joint_names.index(jn) for jn in _G1_ARM_JOINT_NAMES]
+    actuator_joint_names = list(actuator._joint_names)
+    actuator_local_indices = [actuator_joint_names.index(jn) for jn in _G1_ARM_JOINT_NAMES]
+    actuator_global_indices = [robot.joint_names.index(jn) for jn in actuator_joint_names]
+    actuator_global_indices_t = torch.tensor(actuator_global_indices, dtype=torch.long, device=device)
+
+    hidden = torch.zeros(2, num_envs, 128, dtype=torch.float32, device=device)
+    prev_torque = torch.zeros(num_envs, num_joints, dtype=torch.float32, device=device)
+    mj_model = _load_g1_sysid_mujoco_model()
+    mj_data = _mj.MjData(mj_model)
+
+    log_message(
+        "G1 production full-torque GRU: "
+        f"joints={_G1_ARM_JOINT_NAMES}, input=24, output=4, mode=GRU replaces PD"
+    )
+
+    def reset_state():
+        nonlocal hidden, prev_torque
+        hidden.zero_()
+        prev_torque.zero_()
+
+    def patched_compute_local(self, control_action, joint_pos, joint_vel):
+        nonlocal hidden, prev_torque
+
+        full_pos = robot.data.joint_pos
+        if not isinstance(full_pos, torch.Tensor):
+            full_pos = wp.to_torch(full_pos)
+        full_vel = robot.data.joint_vel
+        if not isinstance(full_vel, torch.Tensor):
+            full_vel = wp.to_torch(full_vel)
+
+        q = full_pos[:, joint_indices].to(torch.float32)
+        v = full_vel[:, joint_indices].to(torch.float32)
+        if control_action.joint_positions is not None:
+            q_target = control_action.joint_positions[:, actuator_local_indices].to(torch.float32)
+        else:
+            q_target = q.clone()
+
+        pos_error = q_target - q
+        pd_hint = 40.0 * pos_error - v
+
+        q_np = q.detach().cpu().numpy()
+        v_np = v.detach().cpu().numpy()
+        qfrc_bias_np = np.zeros((num_envs, num_joints), dtype=np.float32)
+        for env_id in range(num_envs):
+            _mj.mj_resetData(mj_model, mj_data)
+            for k, qi in enumerate(_G1_ARM_QPOS_INDICES):
+                mj_data.qpos[qi] = float(q_np[env_id, k])
+            for k, vi in enumerate(_G1_ARM_DOF_INDICES):
+                mj_data.qvel[vi] = float(v_np[env_id, k])
+            _mj.mj_fwdPosition(mj_model, mj_data)
+            _mj.mj_fwdVelocity(mj_model, mj_data)
+            qfrc_bias_np[env_id, :] = [mj_data.qfrc_bias[vi] for vi in _G1_ARM_DOF_INDICES]
+        qfrc_bias = torch.from_numpy(qfrc_bias_np).to(device)
+
+        feats = torch.cat([q, pos_error, v, pd_hint, qfrc_bias, prev_torque], dim=-1)
+        feats_norm = (feats - mean_t) / std_t
+        with torch.inference_mode():
+            torque_out, h_new = model(feats_norm.unsqueeze(1), hidden)
+        hidden[:] = h_new
+        torque = torque_out[:, -1, :].to(torch.float32)
+
+        if control_action.joint_efforts is not None:
+            new_efforts = control_action.joint_efforts.clone()
+        else:
+            new_efforts = torch.zeros(num_envs, actuator.num_joints, dtype=torch.float32, device=device)
+        for k, loc_idx in enumerate(actuator_local_indices):
+            new_efforts[:, loc_idx] = torque[:, k]
+        control_action.joint_efforts = new_efforts
+
+        self.computed_effort = control_action.joint_efforts
+        self.applied_effort = self._clip_effort(self.computed_effort)
+        prev_torque = torque.detach().clone()
+        return control_action
+
+    def patched_compute_compat(self, control_action=None, joint_pos=None, joint_vel=None):
+        # IsaacLab-Newton has shipped both a 3-arg actuator API and a no-arg API.
+        # Keep both paths so the benchmark remains reproducible across installs.
+        if control_action is not None and joint_pos is not None and joint_vel is not None:
+            if isinstance(self.stiffness, torch.Tensor):
+                self.stiffness = torch.zeros_like(self.stiffness)
+            if isinstance(self.damping, torch.Tensor):
+                self.damping = torch.zeros_like(self.damping)
+            return patched_compute_local(self, control_action, joint_pos, joint_vel)
+
+        full_pos = robot.data.joint_pos
+        if not isinstance(full_pos, torch.Tensor):
+            full_pos = wp.to_torch(full_pos)
+        full_vel = robot.data.joint_vel
+        if not isinstance(full_vel, torch.Tensor):
+            full_vel = wp.to_torch(full_vel)
+
+        pos_tgt = self.data._actuator_position_target
+        pos_tgt_t = wp.to_torch(pos_tgt) if not isinstance(pos_tgt, torch.Tensor) else pos_tgt
+        local_pos = full_pos.index_select(1, actuator_global_indices_t)
+        local_vel = full_vel.index_select(1, actuator_global_indices_t)
+        local_pos_tgt = pos_tgt_t.index_select(1, actuator_global_indices_t)
+
+        stiff = self.data._sim_bind_joint_stiffness_sim
+        damp = self.data._sim_bind_joint_damping_sim
+        stiff_t = wp.to_torch(stiff) if not isinstance(stiff, torch.Tensor) else stiff
+        damp_t = wp.to_torch(damp) if not isinstance(damp, torch.Tensor) else damp
+        stiff_t[:, actuator_global_indices_t] = 0.0
+        damp_t[:, actuator_global_indices_t] = 0.0
+        self.stiffness = torch.zeros_like(stiff_t.index_select(1, actuator_global_indices_t))
+        self.damping = torch.zeros_like(damp_t.index_select(1, actuator_global_indices_t))
+
+        if not getattr(self, "_clip_effort_shimmed", False):
+            self._clip_effort = lambda x: x
+            self._clip_effort_shimmed = True
+
+        class _ControlAction:
+            pass
+
+        ca = _ControlAction()
+        ca.joint_positions = local_pos_tgt
+        ca.joint_efforts = None
+        ca.joint_velocities = None
+        patched_compute_local(self, ca, local_pos, local_vel)
+
+        if ca.joint_efforts is not None:
+            eff_tgt = self.data._actuator_effort_target
+            eff_tgt_t = wp.to_torch(eff_tgt) if not isinstance(eff_tgt, torch.Tensor) else eff_tgt
+            joint_effort = self.data.joint_effort
+            joint_effort_t = wp.to_torch(joint_effort) if not isinstance(joint_effort, torch.Tensor) else joint_effort
+            applied_eff = getattr(self.data, "_applied_effort", None)
+            applied_eff_t = (
+                wp.to_torch(applied_eff)
+                if applied_eff is not None and not isinstance(applied_eff, torch.Tensor)
+                else applied_eff
+            )
+
+            if eff_tgt_t.shape[1] == ca.joint_efforts.shape[1]:
+                eff_tgt_t.copy_(ca.joint_efforts.to(eff_tgt_t.dtype))
+                if joint_effort_t.shape[1] == ca.joint_efforts.shape[1]:
+                    joint_effort_t.copy_(ca.joint_efforts.to(joint_effort_t.dtype))
+                else:
+                    src = ca.joint_efforts.to(joint_effort_t.dtype)
+                    for act_loc_idx, robot_idx in zip(actuator_local_indices, joint_indices):
+                        joint_effort_t[:, robot_idx] = src[:, act_loc_idx]
+                if applied_eff_t is not None:
+                    if applied_eff_t.shape[1] == ca.joint_efforts.shape[1]:
+                        applied_eff_t.copy_(ca.joint_efforts.to(applied_eff_t.dtype))
+                    else:
+                        src = ca.joint_efforts.to(applied_eff_t.dtype)
+                        for act_loc_idx, robot_idx in zip(actuator_local_indices, joint_indices):
+                            applied_eff_t[:, robot_idx] = src[:, act_loc_idx]
+            else:
+                src_eff = ca.joint_efforts.to(eff_tgt_t.dtype)
+                src_joint = ca.joint_efforts.to(joint_effort_t.dtype)
+                for act_loc_idx, robot_idx in zip(actuator_local_indices, joint_indices):
+                    eff_tgt_t[:, robot_idx] = src_eff[:, act_loc_idx]
+                    joint_effort_t[:, robot_idx] = src_joint[:, act_loc_idx]
+                if applied_eff_t is not None:
+                    src_applied = ca.joint_efforts.to(applied_eff_t.dtype)
+                    for act_loc_idx, robot_idx in zip(actuator_local_indices, joint_indices):
+                        applied_eff_t[:, robot_idx] = src_applied[:, act_loc_idx]
+
+    actuator.compute = types.MethodType(patched_compute_compat, actuator)
+    actuator._enriched_model = model
+    actuator._enriched_hidden = hidden
+    actuator._enriched_reset_state = reset_state
+    actuator._enriched_mj_model = mj_model
+    actuator._enriched_mj_data = mj_data
+
+
+# ---------------------------------------------------------------------------
 # Arm actuator group helpers
 # ---------------------------------------------------------------------------
 _ARM_JOINT_EXPRS = [".*_shoulder_pitch", ".*_shoulder_roll", ".*_shoulder_yaw", ".*_elbow"]
@@ -643,6 +885,24 @@ _ROBOT_ARM_CFG = {
         "model_subdir": "teststand",
     },
 }
+
+_G1_ARM_CFG = {
+    "joint_exprs": [
+        ".*_shoulder_pitch_joint",
+        ".*_shoulder_roll_joint",
+        ".*_shoulder_yaw_joint",
+        ".*_elbow_pitch_joint",
+    ],
+    "group_name": "arms",
+    "model_subdir": "g1",
+}
+_G1_ALIASES = (
+    "g1_right_arm",
+    "g1_right_arm_default_pd",
+    "g1_right_arm_fulltorque_enriched",
+)
+for _alias in _G1_ALIASES:
+    _ROBOT_ARM_CFG[_alias] = _G1_ARM_CFG
 
 
 def _build_arm_actuators(run_cfg: dict, robot_name: str) -> dict:
@@ -750,10 +1010,19 @@ def _build_arm_actuators(run_cfg: dict, robot_name: str) -> dict:
                 log_message(f"  {jt}: ImplicitActuator (PD-only, no GRU model)")
         return actuators
 
+    elif model_type == "full_torque_enriched":
+        if not yaml_file:
+            raise ValueError("actuator.yaml_file required for model_type=full_torque_enriched")
+        network_file = act_cfg.get("network_file")
+        if not network_file:
+            raise ValueError("actuator.network_file required for model_type=full_torque_enriched")
+        log_message(f"  {group_name}: ImplicitActuator(kp=0) + full_torque_enriched ({network_file})")
+        return {group_name: load_implicit_actuator_cfg(yaml_file, joint_exprs)}
+
     else:
         raise ValueError(
             f"Unknown actuator model_type '{model_type}'. "
-            "Choose from: implicit, dcmotor, lstm, lstm_perjoint, fmu, hybrid_residual"
+            "Choose from: implicit, dcmotor, lstm, lstm_perjoint, fmu, hybrid_residual, full_torque_enriched"
         )
 
 
@@ -960,9 +1229,114 @@ class TestStandBenchmarkSceneCfg(InteractiveSceneCfg):
     )
 
 
+@configclass
+class G1BenchmarkSceneCfg(InteractiveSceneCfg):
+    """Scene with Unitree G1 for right-arm sim2real benchmarking."""
+
+    ground = AssetBaseCfg(
+        prim_path="/World/ground",
+        spawn=sim_utils.GroundPlaneCfg(size=(100.0, 100.0)),
+    )
+
+    robot: ArticulationCfg = G1_MINIMAL_CFG.replace(
+        prim_path="{ENV_REGEX_NS}/Robot",
+        spawn=G1_MINIMAL_CFG.spawn.replace(func=spawn_from_usd_with_fixed_base),
+        init_state=ArticulationCfg.InitialStateCfg(
+            pos=(0.0, 0.0, 1.5),
+            joint_pos={
+                ".*_hip_yaw_joint": 0.0,
+                ".*_hip_roll_joint": 0.0,
+                ".*_hip_pitch_joint": 0.0,
+                ".*_knee_joint": 0.0,
+                ".*_ankle_pitch_joint": 0.0,
+                ".*_ankle_roll_joint": 0.0,
+                "torso_joint": 0.0,
+                ".*_shoulder_pitch_joint": 0.0,
+                ".*_shoulder_roll_joint": 0.0,
+                ".*_shoulder_yaw_joint": 0.0,
+                ".*_elbow_pitch_joint": 0.0,
+            },
+            joint_vel={".*": 0.0},
+        ),
+        actuators={
+            "legs": ImplicitActuatorCfg(
+                joint_names_expr=[
+                    ".*_hip_yaw_joint",
+                    ".*_hip_roll_joint",
+                    ".*_hip_pitch_joint",
+                    ".*_knee_joint",
+                    "torso_joint",
+                ],
+                effort_limit_sim=300,
+                stiffness={
+                    ".*_hip_yaw_joint": 150.0,
+                    ".*_hip_roll_joint": 150.0,
+                    ".*_hip_pitch_joint": 200.0,
+                    ".*_knee_joint": 200.0,
+                    "torso_joint": 200.0,
+                },
+                damping={
+                    ".*_hip_yaw_joint": 5.0,
+                    ".*_hip_roll_joint": 5.0,
+                    ".*_hip_pitch_joint": 5.0,
+                    ".*_knee_joint": 5.0,
+                    "torso_joint": 5.0,
+                },
+            ),
+            "feet": ImplicitActuatorCfg(
+                joint_names_expr=[".*_ankle_pitch_joint", ".*_ankle_roll_joint"],
+                effort_limit_sim=20,
+                stiffness=20.0,
+                damping=2.0,
+            ),
+            "arms": load_implicit_actuator_cfg(
+                "g1/g1_arm_implicit.yaml",
+                [
+                    ".*_shoulder_pitch_joint",
+                    ".*_shoulder_roll_joint",
+                    ".*_shoulder_yaw_joint",
+                    ".*_elbow_pitch_joint",
+                ],
+            ),
+            "hands": ImplicitActuatorCfg(
+                joint_names_expr=[
+                    ".*_elbow_roll_joint",
+                    ".*_five_joint",
+                    ".*_three_joint",
+                    ".*_six_joint",
+                    ".*_four_joint",
+                    ".*_zero_joint",
+                    ".*_one_joint",
+                    ".*_two_joint",
+                ],
+                effort_limit_sim=10,
+                stiffness=5.0,
+                damping=1.0,
+                armature=0.001,
+            ),
+        },
+    )
+
+    dome_light = AssetBaseCfg(
+        prim_path="/World/DomeLight",
+        spawn=sim_utils.DomeLightCfg(color=(0.9, 0.9, 0.9), intensity=500.0),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Robot-specific benchmark configurations
 # ---------------------------------------------------------------------------
+_G1_BENCHMARK_CFG = {
+    "scene_cfg_cls": G1BenchmarkSceneCfg,
+    "actuator_yaml": "g1/g1_arm_implicit.yaml",
+    "joint_name_map": {
+        "right_shoulder_pitch": "right_shoulder_pitch_joint",
+        "right_shoulder_roll": "right_shoulder_roll_joint",
+        "right_shoulder_yaw": "right_shoulder_yaw_joint",
+        "right_elbow": "right_elbow_pitch_joint",
+    },
+}
+
 _BENCHMARK_ROBOT_CONFIGS = {
     "h1": {
         "scene_cfg_cls": H1BenchmarkSceneCfg,
@@ -981,6 +1355,8 @@ _BENCHMARK_ROBOT_CONFIGS = {
         "actuator_yaml": "teststand/teststand_implicit.yaml",
     },
 }
+for _alias in _G1_ALIASES:
+    _BENCHMARK_ROBOT_CONFIGS[_alias] = _G1_BENCHMARK_CFG
 
 
 class NewtonJointMotionBenchmark:
@@ -997,6 +1373,8 @@ class NewtonJointMotionBenchmark:
         self.valid_joints_file = args.valid_joints_file
         self.output_folder = args.output_folder
         self.fix_root = args.fix_root
+        self._real_init_pose = getattr(args, "real_init_pose", None) or {}
+        self._real_init_vel = getattr(args, "real_init_vel", None) or {}
         self.physics_freq = args.physics_freq
         self.render_freq = args.render_freq
         self.original_control_freq = args.original_control_freq
@@ -1180,6 +1558,25 @@ class NewtonJointMotionBenchmark:
                             cross_joint_map=arm_cfg.get("cross_joint_map"),
                         )
 
+        if act_cfg.get("model_type") == "full_torque_enriched":
+            network_file = act_cfg.get("network_file")
+            stats_file = act_cfg.get("stats_file")
+            if not network_file or not stats_file:
+                raise ValueError("full_torque_enriched requires actuator.network_file and actuator.stats_file")
+            model_path = os.path.join(_ACTUATOR_MODELS_BASE, network_file)
+            stats_path = os.path.join(_ACTUATOR_MODELS_BASE, stats_file)
+            for name, actuator in self.robot.actuators.items():
+                if type(actuator).__name__ == "ImplicitActuator" and (
+                    name in ("arms", "arm") or name.startswith("arms_")
+                ):
+                    log_message(f"Patching '{name}' with full_torque_enriched: {os.path.basename(model_path)}")
+                    _patch_g1_fulltorque_enriched(
+                        actuator=actuator,
+                        robot=self.robot,
+                        model_path=model_path,
+                        stats_path=stats_path,
+                    )
+
         # Reset scene state
         self.scene.reset()
 
@@ -1188,10 +1585,42 @@ class NewtonJointMotionBenchmark:
         # viscous_friction → mujoco.dof_passive_damping).
         self._apply_newton_friction_params()
 
+        mass_overrides = self._run_cfg.get("mass_overrides")
+        if mass_overrides:
+            all_masses = wp.to_torch(self.robot.data.body_mass).clone()
+            applied = 0
+            for body_name, override in mass_overrides.items():
+                bidx = override.get("body_index")
+                if bidx is None:
+                    try:
+                        bidx = self.robot.body_names.index(body_name)
+                    except ValueError:
+                        log_message(f"WARNING: mass override body '{body_name}' not in USD, skipping")
+                        continue
+                old_mass = float(all_masses[0, bidx].item())
+                new_mass = max(old_mass + float(override["delta_mass"]), 0.05)
+                all_masses[:, bidx] = new_mass
+                applied += 1
+                log_message(
+                    f"Mass override: {body_name} (body {bidx}) "
+                    f"{old_mass:.3f} -> {new_mass:.3f} kg"
+                )
+            if applied:
+                if hasattr(self.robot, "set_masses_index"):
+                    self.robot.set_masses_index(masses=all_masses)
+                else:
+                    self.robot.set_masses(masses=all_masses)
+            log_message(f"Applied {applied} baked mass corrections")
+
         # Build joint name-to-index mapping
         self._joint_name_to_idx = {}
         for i, name in enumerate(self.robot.joint_names):
             self._joint_name_to_idx[name] = i
+
+        robot_cfg = _BENCHMARK_ROBOT_CONFIGS.get(self.robot_name, {})
+        for csv_name, sim_name in robot_cfg.get("joint_name_map", {}).items():
+            if sim_name in self._joint_name_to_idx and csv_name not in self._joint_name_to_idx:
+                self._joint_name_to_idx[csv_name] = self._joint_name_to_idx[sim_name]
 
         log_message(f"Newton simulation initialized with {len(self.robot.joint_names)} joints")
         log_message(f"Physics dt: {self.physics_dt}, Render dt: {self.render_dt}, Control dt: {self.control_dt}")
@@ -1425,6 +1854,13 @@ class NewtonJointMotionBenchmark:
         self._sim_time += self.physics_dt
         self.scene.update(self.physics_dt)
 
+    def _reset_learned_actuator_state(self):
+        """Reset learned actuator recurrent state before the buffer warm-up."""
+        for actuator in self.robot.actuators.values():
+            reset_fn = getattr(actuator, "_enriched_reset_state", None)
+            if reset_fn is not None:
+                reset_fn()
+
     def set_motion(self, motion_file, motion_name):
         """Set up for a new motion file."""
         self.motion_file = motion_file
@@ -1579,6 +2015,7 @@ class NewtonJointMotionBenchmark:
         # Note: sim.reset() is only called once in _setup_simulation().
         # Newton's solver_cfg is consumed on first reset and cannot be re-initialized.
         self._sim_time = 0.0
+        self._reset_learned_actuator_state()
 
         # --- Buffer phase: interpolate from current pose to motion start ---
         _bench_section = self._run_cfg.get("benchmark", {})
@@ -1613,6 +2050,26 @@ class NewtonJointMotionBenchmark:
             pbar.update(1)
 
         buffer_end_time = self._sim_time
+
+        init_pose = self._real_init_pose.get(self.motion_name)
+        if init_pose is not None:
+            full_pos = self._to_torch(self.robot.data.joint_pos).clone()
+            full_vel = torch.zeros_like(full_pos)
+            pose_tensor = torch.tensor(init_pose, dtype=full_pos.dtype, device=self.robot.device)
+            if pose_tensor.numel() == self.joint_indices.numel():
+                full_pos[0, self.joint_indices] = pose_tensor
+                init_vel = self._real_init_vel.get(self.motion_name)
+                if init_vel is not None:
+                    vel_tensor = torch.tensor(init_vel, dtype=full_vel.dtype, device=self.robot.device)
+                    if vel_tensor.numel() == self.joint_indices.numel():
+                        full_vel[0, self.joint_indices] = vel_tensor
+                self.robot.write_joint_state_to_sim(full_pos, full_vel)
+                tqdm.write("[Benchmark] Init-pose sync: teleported sim to real row-0 pose")
+            else:
+                tqdm.write(
+                    f"[Benchmark] WARNING: init pose has {pose_tensor.numel()} joints "
+                    f"but benchmark tracks {self.joint_indices.numel()}; skipping teleport"
+                )
 
         joint_pos = self._to_torch(self.robot.data.joint_pos)
         current_pos = joint_pos[0, self.joint_indices].cpu().numpy()
@@ -1753,6 +2210,7 @@ class NewtonJointMotionBenchmark:
 
         # --- Simulation ---
         self._sim_time = 0.0
+        self._reset_learned_actuator_state()
         _bench_section = self._run_cfg.get("benchmark", {})
         BUFFER_TIME = float(_bench_section.get("buffer_time", 5.0))
         buffer_control_steps = int(BUFFER_TIME / self.control_dt)

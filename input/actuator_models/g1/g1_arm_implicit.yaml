@@ -1,0 +1,39 @@
+# Copyright (c) 2022-2026, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
+# G1 right arm motor parameters
+#
+# Implicit PD control with motor mechanical parameters.
+# Starting values from Unitree SDK g1_low_level_example.py (kp=40, kd=1).
+# Actuator regex uses _elbow_pitch to match G1 USD joint right_elbow_pitch_joint.
+
+# Effort/velocity limits
+effort_limit_sim: 25.0          # N-m
+velocity_limit_sim: 30.0        # rad/s
+
+# PD gains (from Unitree SDK)
+stiffness: 40.0                 # kp
+damping: 1.0                    # kd
+
+# Command transport delay
+motor_lag_ms: 0.0               # ms — TBD, measure on G1 hardware
+
+armature:
+  ".*_shoulder_pitch_joint": 0.01
+  ".*_shoulder_roll_joint": 0.01
+  ".*_shoulder_yaw_joint": 0.01
+  ".*_elbow_pitch_joint": 0.01
+
+dynamic_friction:
+  ".*_shoulder_pitch_joint": 0.0
+  ".*_shoulder_roll_joint": 0.0
+  ".*_shoulder_yaw_joint": 0.0
+  ".*_elbow_pitch_joint": 0.0
+
+viscous_friction:
+  ".*_shoulder_pitch_joint": 0.0
+  ".*_shoulder_roll_joint": 0.0
+  ".*_shoulder_yaw_joint": 0.0
+  ".*_elbow_pitch_joint": 0.0

@@ -1,0 +1,33 @@
+# Copyright (c) 2022-2026, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
+# G1 right arm — NO solver PD (for full-torque GRU experiments)
+# Same masses/armature/friction as Full Joint SysID champion, but kp=kd=0 so
+# the solver PD contributes zero torque. GRU output in qfrc_applied becomes
+# the total actuator torque.
+
+effort_limit_sim: 25.0
+velocity_limit_sim: 30.0
+
+stiffness: 0.0
+damping: 0.0
+
+armature:
+  ".*_shoulder_pitch_joint": 0.00175
+  ".*_shoulder_roll_joint": 0.01930
+  ".*_shoulder_yaw_joint": 0.01540
+  ".*_elbow_pitch_joint": 0.00075
+
+dynamic_friction:
+  ".*_shoulder_pitch_joint": 0.304
+  ".*_shoulder_roll_joint": 0.377
+  ".*_shoulder_yaw_joint": 0.255
+  ".*_elbow_pitch_joint": 0.522
+
+viscous_friction:
+  ".*_shoulder_pitch_joint": 0.583
+  ".*_shoulder_roll_joint": 1.020
+  ".*_shoulder_yaw_joint": 0.114
+  ".*_elbow_pitch_joint": 0.252

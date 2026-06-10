@@ -32,6 +32,7 @@ import tempfile
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "input"))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "sysid"))
 from actuator_models import load_actuator_params
+from motor_csv import normalize_motor_csv_time_seconds
 from run_configs import load_run_cfg
 
 from isaaclab.app import AppLauncher
@@ -76,6 +77,11 @@ parser.add_argument(
     default=None,
     help="Motor command lag in milliseconds. Delays position targets by N physics steps. "
     "If not set, reads motor_lag_ms from the arms actuator YAML (if present).",
+)
+parser.add_argument(
+    "--real-init-pose-sync",
+    action="store_true",
+    help="Teleport scored joints to row 0 of real state_motor.csv after buffer warm-up.",
 )
 parser.add_argument("--record-video", action="store_true", help="Record video")
 
@@ -254,6 +260,7 @@ def _load_generic_motor_csv(csv_path, joints):
 
     header_keys = set(rows[0].keys()) if rows else set()
     time_s = np.array([float(r["time_s"]) for r in rows])
+    time_s = normalize_motor_csv_time_seconds(time_s)
 
     positions = {}
     velocities = {}
@@ -619,8 +626,52 @@ def main():
 
     log_message(f"Prepared {len(motions)} motions for benchmark")
 
+    args.real_init_pose = {}
+    args.real_init_vel = {}
+    if args.real_init_pose_sync:
+        init_dict = {}
+        init_vel_dict = {}
+        real_root = os.path.join(args.output_folder, "real", args.robot_name, args.motion_source)
+        fallback_root = _bench_cfg.get("real_data_root")
+        for _, motion_name in motions:
+            state_csv = os.path.join(real_root, motion_name, "state_motor.csv")
+            if not os.path.isfile(state_csv) and fallback_root:
+                fallback = os.path.join(fallback_root, motion_name, "state_motor.csv")
+                if os.path.isfile(fallback):
+                    state_csv = fallback
+            if not os.path.isfile(state_csv):
+                log_message(f"WARNING: --real-init-pose-sync requested but state CSV not found for {motion_name}")
+                continue
+            with open(state_csv) as f:
+                reader = csv.reader(f)
+                next(reader, None)
+                for row in reader:
+                    if row and row[0] == "STATE_MOTOR":
+                        try:
+                            init_dict[motion_name] = list(ast.literal_eval(row[2]))
+                            if len(row) > 3:
+                                init_vel_dict[motion_name] = list(ast.literal_eval(row[3]))
+                        except (ValueError, SyntaxError) as exc:
+                            log_message(f"WARNING: malformed init state in {state_csv}: {exc}")
+                            init_dict.pop(motion_name, None)
+                            init_vel_dict.pop(motion_name, None)
+                        break
+        args.real_init_pose = init_dict
+        args.real_init_vel = init_vel_dict
+        log_message(
+            f"--real-init-pose-sync: populated init pose for {len(init_dict)}/{len(motions)} motions "
+            f"(init vel for {len(init_vel_dict)})"
+        )
+
     # Create benchmark with num_envs matching motion count for parallel execution
-    num_envs = args.num_envs if args.num_envs is not None else (len(motions) if len(motions) > 1 else 1)
+    if args.num_envs is not None:
+        num_envs = args.num_envs
+    elif args.real_init_pose_sync:
+        # Init-pose sync is a per-motion operation; default to sequential per-motion
+        # runs for fair current G1 scoring unless the caller explicitly opts into batching.
+        num_envs = 1
+    else:
+        num_envs = len(motions) if len(motions) > 1 else 1
     benchmark = NewtonJointMotionBenchmark(args, num_envs=num_envs)
 
     _write_run_summary(args.output_folder, args.robot_name, args.motion_source, _run_cfg, args)
