@@ -5,9 +5,9 @@
 
 from __future__ import annotations
 
-import fcntl
 import logging
 import os
+import sys
 import tempfile
 from typing import TYPE_CHECKING
 
@@ -314,7 +314,14 @@ def _spawn_from_usd_file(
     if _world_size > 1:
         lock_path = os.path.join(tempfile.gettempdir(), "isaaclab_usd_spawn.lock")
         lock_fd = open(lock_path, "w")  # noqa: SIM115
-        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        if sys.platform == "win32":
+            import msvcrt
+
+            msvcrt.locking(lock_fd.fileno(), msvcrt.LK_LOCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
     try:
         if file_status == 2:
             usd_path = retrieve_file_path(usd_path, force_download=False)
@@ -332,7 +339,14 @@ def _spawn_from_usd_file(
             logger.warning(f"A prim already exists at prim path: '{prim_path}'.")
     finally:
         if _world_size > 1:
-            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            if sys.platform == "win32":
+                import msvcrt
+
+                msvcrt.locking(lock_fd.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(lock_fd, fcntl.LOCK_UN)
             lock_fd.close()
 
     # modify variants

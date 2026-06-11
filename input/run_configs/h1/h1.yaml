@@ -81,7 +81,8 @@ analysis:
 
 actuator:
   model_type: implicit
-  yaml_file: h1/h1_arm_sysid_implicit.yaml
+  yaml_file: h1/h1_arm_implicit.yaml            # Reference to use PD gains (ALC)
+  # yaml_file: h1/h1_arm_sysid_implicit.yaml
 
 #-------------------------------------------------------------------------------------
 sysid:

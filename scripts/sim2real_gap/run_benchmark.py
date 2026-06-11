@@ -29,7 +29,15 @@ import os
 import sys
 import tempfile
 
+# Pre-import pyarrow before any CUDA/Warp initialization to avoid
+# DLL load-order access violation on Windows (pyarrow 24.x + CUDA 12.x).
+try:
+    import pyarrow  # noqa: F401
+except ImportError:
+    pass
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "input"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "."))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "sysid"))
 from actuator_models import load_actuator_params
 from run_configs import load_run_cfg

@@ -25,6 +25,7 @@ import argparse
 import os
 import re
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -260,6 +261,38 @@ def _strip_actuator_suffix(name):
     return None
 
 
+def _create_dir_link(target, link_path):
+    """Create a directory symlink, falling back to a junction on Windows.
+
+    Junctions don't require elevated privileges or Developer Mode.
+    """
+    try:
+        os.symlink(target, link_path, target_is_directory=True)
+    except OSError:
+        if sys.platform != "win32":
+            raise
+        # Resolve to absolute paths for the junction
+        abs_link = os.path.abspath(link_path)
+        abs_target = os.path.abspath(os.path.join(os.path.dirname(link_path), target))
+        subprocess.check_call(
+            ["cmd", "/c", "mklink", "/J", abs_link, abs_target],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+
+
+def _remove_dir_link(link_path):
+    """Remove a symlink or junction."""
+    if os.path.islink(link_path):
+        os.unlink(link_path)
+    elif sys.platform == "win32" and os.path.isdir(link_path):
+        # os.rmdir removes junctions without deleting the target contents
+        try:
+            os.rmdir(link_path)
+        except OSError:
+            pass
+
+
 def _create_real_symlinks(result_folder, robot_name, motion_source):
     """Create symlinks in real/ so SAGE's strict name matching works.
 
@@ -291,9 +324,9 @@ def _create_real_symlinks(result_folder, robot_name, motion_source):
         # Strip the actuator part to get the base motion_source
         base_motion_source = "/".join(parts[:-1])
         real_parent = os.path.join(result_folder, "real", robot_name, base_motion_source)
-        # If real/ has the base dir but not the actuator subdir, symlink it
+        # If real/ has the base dir but not the actuator subdir, link it
         if os.path.isdir(real_parent) and not os.path.exists(real_dir):
-            os.symlink(".", real_dir)
+            _create_dir_link(".", real_dir)
             print(f"[Analysis] Linked real/{robot_name}/{motion_source} -> . (actuator subfolder)")
             created_links.append(real_dir)
             return created_links
@@ -301,6 +334,7 @@ def _create_real_symlinks(result_folder, robot_name, motion_source):
     # Legacy suffix layout: sim motion folders have actuator suffix appended
     if not os.path.isdir(real_dir):
         return []
+    
 
     sim_motions = [d for d in os.listdir(sim_dir) if os.path.isdir(os.path.join(sim_dir, d))]
     for sim_name in sim_motions:
@@ -312,7 +346,7 @@ def _create_real_symlinks(result_folder, robot_name, motion_source):
         real_link = os.path.join(real_dir, sim_name)
 
         if os.path.isdir(real_target) and not os.path.exists(real_link):
-            os.symlink(base_name, real_link)
+            _create_dir_link(base_name, real_link)
             print(f"[Analysis] Linked real/{sim_name} -> {base_name}")
             created_links.append(real_link)
 
@@ -320,10 +354,9 @@ def _create_real_symlinks(result_folder, robot_name, motion_source):
 
 
 def _cleanup_symlinks(links):
-    """Remove symlinks created by _create_real_symlinks."""
+    """Remove symlinks/junctions created by _create_real_symlinks."""
     for link in links:
-        if os.path.islink(link):
-            os.unlink(link)
+        _remove_dir_link(link)
 
 
 def _rename_output_with_suffixes(output_dir, result_folder, robot_name, motion_source):

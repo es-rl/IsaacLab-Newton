@@ -14,6 +14,14 @@ import logging
 from typing import TYPE_CHECKING
 
 import numpy as np
+
+# Pre-import pyarrow before warp/CUDA to avoid DLL load-order
+# access violation on Windows (pyarrow 24.x + CUDA 12.x).
+try:
+    import pyarrow  # noqa: F401
+except ImportError:
+    pass
+
 import warp as wp
 
 # Load CUDA runtime for relaxed-mode graph capture (RTX-compatible).
