@@ -1,3 +1,8 @@
+# Copyright (c) 2022-2026, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
 # UR10e runtime configuration
 # CLI arguments override values set here.
 
@@ -31,3 +36,7 @@ sysid:
   sigma: 0.5
   epsilon: 0.01
   buffer_time: 2.0          # seconds — settle before replay
+  objective: mse            # mse | wasserstein | mmd
+  mmd_num_features: 256
+  mmd_seed: 0
+  mmd_chunk_size: 1024

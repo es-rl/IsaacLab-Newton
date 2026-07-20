@@ -1,3 +1,8 @@
+# Copyright (c) 2022-2026, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
 """CMA-ES optimizer for actuator system identification.
 
 Adapted from PACE (ETH Zurich) — operates in normalized [-1, 1] space with
@@ -37,6 +42,7 @@ class CMAESOptimizer:
         max_iterations: int | None = None,
         epsilon: float | None = None,
         joint_types: list[str] | None = None,
+        objective: str = "mse",
     ):
         with open(config_path) as f:
             cfg = yaml.safe_load(f)
@@ -46,6 +52,9 @@ class CMAESOptimizer:
         self.mirror: bool = cfg.get("mirror", True)
         self.num_envs = num_envs
         self.device = device
+        if objective not in ("mse", "wasserstein", "mmd"):
+            raise ValueError(f"Unsupported objective: {objective}")
+        self.objective = objective
 
         # Build parameter names, bounds, and slices
         self.param_names: list[str] = []
@@ -184,9 +193,7 @@ class CMAESOptimizer:
         else:
             rel_range = score_range
 
-        converged = self.generation >= self.max_iterations or (
-            self.epsilon is not None and rel_range < self.epsilon
-        )
+        converged = self.generation >= self.max_iterations or (self.epsilon is not None and rel_range < self.epsilon)
         return converged
 
     # ------------------------------------------------------------------
@@ -247,6 +254,12 @@ class CMAESOptimizer:
             # Also store a single average for easy copy to YAML
             result[f"{prop_name}_mean"] = round(float(values.mean()), 6)
         result["best_mse"] = self._best_score
+        if self.objective != "mse":
+            del result["best_mse"]
+            result["objective"] = self.objective
+            result["best_score"] = self._best_score
+            metric_key = "best_wasserstein" if self.objective == "wasserstein" else "best_mmd_rff_squared"
+            result[metric_key] = self._best_score
         result.update(self.fixed)
         return result
 
@@ -257,6 +270,8 @@ class CMAESOptimizer:
             writer = csv.writer(f)
             if not file_exists:
                 header = ["generation", "best_mse", "mean_mse", "min_mse"] + self.param_names
+                if self.objective != "mse":
+                    header = ["generation", "objective", "best_score", "mean_score", "min_score", *self.param_names]
                 writer.writerow(header)
 
             if self._score_steps > 0:
@@ -271,5 +286,7 @@ class CMAESOptimizer:
                 mean_scores.mean().item(),
                 mean_scores[best_idx].item(),
             ]
+            if self.objective != "mse":
+                row.insert(1, self.objective)
             row += [round(float(v), 6) for v in self.params[best_idx]]
             writer.writerow(row)

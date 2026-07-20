@@ -153,7 +153,15 @@ python scripts/sim2real_gap/run_benchmark.py --robot-name ur10e --headless
 python scripts/sim2real_gap/run_analysis.py --robot-name ur10e
 ```
 
-Analysis produces per-joint comparison plots (with RMSE), boxplots, and a metrics Excel file (`metrics_summary.xlsx`). Output folders are suffixed with the actuator model type.
+Analysis produces per-joint comparison plots (with RMSE), boxplots, the SAGE
+metrics workbook (`metrics_summary.xlsx`), and `distributional_metrics.csv`.
+The distributional report contains exact one-dimensional Wasserstein distance
+and deterministic approximate RBF-MMD² for each motion, joint, and feature,
+plus motion/group/overall aggregates. Position and velocity contribute to the
+normalized aggregate; commanded position is diagnostic only because benchmark
+replay intentionally uses matching commands. Distributional comparisons do not
+interpolate or align samples in time, so use RMSE when temporal tracking error
+matters. Output folders are suffixed with the actuator model type.
 
 ---
 
@@ -413,6 +421,10 @@ If a CLI arg is explicitly provided, it wins. Otherwise the run config value is 
 | `output_dir` | `output/sim2real_analysis` | Output directory for analysis plots and metrics |
 | `sample_dt` | `0.005` | Comparison timestep (seconds) |
 | `motion_names` | `"*"` (all) | Which motions to analyze. Accepts a list (`[EC01_elbow_chirp, EC02_elbow_chirp]`), comma-separated string, or glob pattern (`"*elbow*"`). Base names auto-resolve to actuator-suffixed sim folders. |
+| `distributional_metrics_file` | `distributional_metrics.csv` | CSV containing Wasserstein and approximate RBF-MMD² detail and aggregates |
+| `mmd_num_features` | `256` | Random Fourier feature count for approximate RBF-MMD² |
+| `mmd_seed` | `0` | Deterministic random Fourier feature seed |
+| `mmd_chunk_size` | `1024` | Samples embedded per MMD chunk to bound memory use |
 
 **`actuator`** — Actuator model selection (benchmark only):
 

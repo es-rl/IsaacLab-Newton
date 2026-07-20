@@ -1,8 +1,14 @@
+# Copyright (c) 2022-2026, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
 """CMA-ES system identification for robot actuator parameters.
 
 Runs PACE-style optimization: N parallel sim environments, each with different
-candidate motor parameters, replaying real robot data and minimizing position
-MSE vs real measured response.
+candidate motor parameters, replaying real robot data and minimizing either
+time-aligned position MSE or a position/velocity distributional score against
+the real measured response.
 
 Supported robots: h1 (default), ur10e, so101
 
@@ -36,6 +42,7 @@ Usage (UR10e all-joints CSV):
 """
 
 import argparse
+import contextlib
 import glob
 import os
 import sys
@@ -87,6 +94,17 @@ parser.add_argument("--num-envs", type=int, default=64, help="Parallel environme
 parser.add_argument("--max-iter", type=int, default=200, help="Maximum CMA-ES generations")
 parser.add_argument("--sigma", type=float, default=None, help="CMA-ES initial step size")
 parser.add_argument("--epsilon", type=float, default=None, help="CMA-ES convergence threshold")
+parser.add_argument(
+    "--objective",
+    choices=("mse", "wasserstein", "mmd"),
+    default=None,
+    help="CMA-ES objective (default: mse)",
+)
+parser.add_argument(
+    "--mmd_num_features", type=int, default=None, help="Random Fourier feature count for MMD (default: 256)"
+)
+parser.add_argument("--mmd_seed", type=int, default=None, help="Random Fourier feature seed (default: 0)")
+parser.add_argument("--mmd_chunk_size", type=int, default=None, help="MMD trajectory chunk size (default: 1024)")
 parser.add_argument(
     "--joints",
     type=str,
@@ -141,6 +159,17 @@ for _attr, _default in [
 # Float-defaulted args
 if args.buffer_time == 2.0 and "buffer_time" in _sysid_cfg:
     args.buffer_time = _sysid_cfg["buffer_time"]
+if args.objective is None:
+    args.objective = str(_sysid_cfg.get("objective", "mse"))
+for _attr, _default in (("mmd_num_features", 256), ("mmd_seed", 0), ("mmd_chunk_size", 1024)):
+    if getattr(args, _attr) is None:
+        setattr(args, _attr, int(_sysid_cfg.get(_attr, _default)))
+if args.objective not in ("mse", "wasserstein", "mmd"):
+    parser.error("sysid objective must be one of: mse, wasserstein, mmd")
+if args.mmd_num_features <= 0:
+    parser.error("--mmd_num_features must be positive")
+if args.mmd_chunk_size <= 0:
+    parser.error("--mmd_chunk_size must be positive")
 
 # None-defaulted args
 for _attr in ("sigma", "epsilon", "real_data_dir", "joints"):
@@ -158,9 +187,7 @@ elif isinstance(args.joints, list):
 # else: None → use all joint types from bounds YAML
 
 # Resolve defaults that depend on --robot-name
-_RUN_CONFIGS_DIR = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "..", "input", "run_configs")
-)
+_RUN_CONFIGS_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "input", "run_configs"))
 _DEFAULT_CONFIGS = {
     "h1": os.path.join(_RUN_CONFIGS_DIR, "h1", "h1_arms_sysid_bounds.yaml"),
     "h1_right_arm": os.path.join(_RUN_CONFIGS_DIR, "h1", "h1_right_arm_sysid_bounds.yaml"),
@@ -190,11 +217,12 @@ simulation_app = app_launcher.app
 
 # --- Sim-dependent imports (after AppLauncher) ---
 
+from collections import deque
+
 import numpy as np
 import pandas as pd
 import torch
 import warp as wp
-from collections import deque
 from scipy.interpolate import interp1d
 from tqdm import tqdm
 
@@ -202,6 +230,8 @@ import isaaclab.sim as sim_utils
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "input"))
 from actuator_models import load_actuator_params, load_implicit_actuator_cfg
+from spawn_utils import spawn_from_usd_with_fixed_base
+
 from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab.assets import ArticulationCfg, AssetBaseCfg
 from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
@@ -209,8 +239,9 @@ from isaaclab.sim import SimulationCfg, SimulationContext
 from isaaclab.utils import configclass
 
 from isaaclab_assets.robots.unitree import H1_MINIMAL_CFG
-from spawn_utils import spawn_from_usd_with_fixed_base
 
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "sim2real_gap"))
+from distributional_metrics import compute_batched_distributional_score, load_sage_joint_velocities
 from optimizer import CMAESOptimizer
 
 # Local H1 USD (avoids dependency on cloud-hosted Omniverse Nucleus server)
@@ -226,6 +257,7 @@ def log_message(msg):
 # ---------------------------------------------------------------------------
 # Scene config
 # ---------------------------------------------------------------------------
+
 
 @configclass
 class SysidSceneCfg(InteractiveSceneCfg):
@@ -260,12 +292,18 @@ class SysidSceneCfg(InteractiveSceneCfg):
                 joint_names_expr=[".*_hip_yaw", ".*_hip_roll", ".*_hip_pitch", ".*_knee", "torso"],
                 effort_limit_sim=300,
                 stiffness={
-                    ".*_hip_yaw": 50.0, ".*_hip_roll": 50.0,
-                    ".*_hip_pitch": 100.0, ".*_knee": 100.0, "torso": 100.0,
+                    ".*_hip_yaw": 50.0,
+                    ".*_hip_roll": 50.0,
+                    ".*_hip_pitch": 100.0,
+                    ".*_knee": 100.0,
+                    "torso": 100.0,
                 },
                 damping={
-                    ".*_hip_yaw": 5.0, ".*_hip_roll": 5.0,
-                    ".*_hip_pitch": 5.0, ".*_knee": 5.0, "torso": 5.0,
+                    ".*_hip_yaw": 5.0,
+                    ".*_hip_roll": 5.0,
+                    ".*_hip_pitch": 5.0,
+                    ".*_knee": 5.0,
+                    "torso": 5.0,
                 },
             ),
             "feet": ImplicitActuatorCfg(
@@ -287,9 +325,9 @@ class SysidSceneCfg(InteractiveSceneCfg):
     )
 
 
-_UR10_USD_PATH = os.path.abspath(os.path.join(
-    os.path.dirname(__file__), "..", "..", "input", "robot_models", "ur10", "ur10", "ur10.usd"
-))
+_UR10_USD_PATH = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "..", "input", "robot_models", "ur10", "ur10", "ur10.usd")
+)
 
 _SO101_USD_PATH = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..", "input", "robot_models", "so101", "so101.usd")
@@ -382,17 +420,30 @@ class So101SysidSceneCfg(InteractiveSceneCfg):
 # ---------------------------------------------------------------------------
 
 H1_ARM_JOINT_NAMES = [
-    "right_shoulder_pitch", "right_shoulder_roll", "right_shoulder_yaw", "right_elbow",
-    "left_shoulder_pitch", "left_shoulder_roll", "left_shoulder_yaw", "left_elbow",
+    "right_shoulder_pitch",
+    "right_shoulder_roll",
+    "right_shoulder_yaw",
+    "right_elbow",
+    "left_shoulder_pitch",
+    "left_shoulder_roll",
+    "left_shoulder_yaw",
+    "left_elbow",
 ]
 
 H1_RIGHT_ARM_JOINT_NAMES = [
-    "right_shoulder_pitch", "right_shoulder_roll", "right_shoulder_yaw", "right_elbow",
+    "right_shoulder_pitch",
+    "right_shoulder_roll",
+    "right_shoulder_yaw",
+    "right_elbow",
 ]
 
 UR10E_JOINT_NAMES = [
-    "shoulder_pan_joint", "shoulder_lift_joint", "elbow_joint",
-    "wrist_1_joint", "wrist_2_joint", "wrist_3_joint",
+    "shoulder_pan_joint",
+    "shoulder_lift_joint",
+    "elbow_joint",
+    "wrist_1_joint",
+    "wrist_2_joint",
+    "wrist_3_joint",
 ]
 
 # SO-101 uses USD prim names directly (no _joint suffix).
@@ -434,52 +485,56 @@ _ROBOT_CONFIGS = {
 # Data loading: single-joint parquet chirp
 # ---------------------------------------------------------------------------
 
-def load_chirp_parquets(file_paths: list[str], target_dt: float) -> tuple[np.ndarray, np.ndarray]:
+
+def load_chirp_parquets(file_paths: list[str], target_dt: float) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Load and concatenate single-joint chirp parquet files.
 
-    Each parquet has columns: time, position, commanded_position, ...
-    Data is typically at 2000 Hz. Resampled to target_dt.
+    Each parquet has position and commanded-position columns. Measured
+    velocity is loaded when present and otherwise derived per file before
+    concatenation. Data is resampled to ``target_dt``.
 
     Returns:
-        commanded: (T,) array of commanded positions.
-        measured:  (T,) array of actual measured positions.
+        Commanded position [rad], measured position [rad], and measured
+        velocity [rad/s], each with shape ``(sample_count,)``.
     """
     all_cmd = []
     all_pos = []
+    all_vel = []
 
     for path in sorted(file_paths):
         df = pd.read_parquet(path)
-        log_message(f"  {os.path.basename(path)}: {len(df)} rows, "
-                    f"{(df['time'].max() - df['time'].min()) / 1e9:.1f}s")
+        log_message(f"  {os.path.basename(path)}: {len(df)} rows, {(df['time'].max() - df['time'].min()) / 1e9:.1f}s")
 
         times = df["time"].values / 1e9  # nanoseconds → seconds
         data_dt = float(np.median(np.diff(times)))
-
         cmd = df["commanded_position"].values
         pos = df["position"].values
+        vel = df["velocity"].values if "velocity" in df.columns else np.gradient(pos, data_dt)
 
         if abs(data_dt - target_dt) > 1e-6:
             duration = times[-1] - times[0]
             new_len = int(round(duration / target_dt))
             new_times = np.linspace(times[0], times[-1], new_len, endpoint=False)
             new_times = new_times[new_times <= times[-1]]
-            f_cmd = interp1d(times, cmd, kind="linear")
-            f_pos = interp1d(times, pos, kind="linear")
-            cmd = f_cmd(new_times)
-            pos = f_pos(new_times)
+            cmd = interp1d(times, cmd, kind="linear")(new_times)
+            pos = interp1d(times, pos, kind="linear")(new_times)
+            vel = interp1d(times, vel, kind="linear")(new_times)
 
         all_cmd.append(cmd)
         all_pos.append(pos)
+        all_vel.append(vel)
 
     commanded = np.concatenate(all_cmd)
     measured = np.concatenate(all_pos)
-    log_message(f"Total: {len(commanded)} steps at {1/target_dt:.0f}Hz = {len(commanded) * target_dt:.1f}s")
-    return commanded, measured
+    measured_velocity = np.concatenate(all_vel)
+    log_message(f"Total: {len(commanded)} steps at {1 / target_dt:.0f}Hz = {len(commanded) * target_dt:.1f}s")
+    return commanded, measured, measured_velocity
 
 
 # ---------------------------------------------------------------------------
 # Auto-convert motor CSVs to SAGE format
 # ---------------------------------------------------------------------------
+
 
 def auto_convert_motor_csvs(data_dir: str, output_dir: str) -> str:
     """Detect and convert raw motor CSVs to SAGE format if needed.
@@ -558,7 +613,8 @@ def auto_convert_motor_csvs(data_dir: str, output_dir: str) -> str:
 # Main
 # ---------------------------------------------------------------------------
 
-def main():
+
+def main():  # noqa: C901
     t_start = time.time()
 
     num_envs = args.num_envs
@@ -614,11 +670,12 @@ def main():
             parquet_files = [f.strip() for f in args.data_files.split(",")]
 
         log_message(f"MODE: Single-joint ({args.joint_name}), {len(parquet_files)} chirp files")
-        commanded_1d, measured_1d = load_chirp_parquets(parquet_files, control_dt)
+        commanded_1d, measured_1d, measured_velocity_1d = load_chirp_parquets(parquet_files, control_dt)
 
         if args.max_trajectory_len and len(commanded_1d) > args.max_trajectory_len:
-            commanded_1d = commanded_1d[:args.max_trajectory_len]
-            measured_1d = measured_1d[:args.max_trajectory_len]
+            commanded_1d = commanded_1d[: args.max_trajectory_len]
+            measured_1d = measured_1d[: args.max_trajectory_len]
+            measured_velocity_1d = measured_velocity_1d[: args.max_trajectory_len]
             log_message(f"Truncated to {args.max_trajectory_len} steps")
 
         trajectory_len = len(commanded_1d)
@@ -626,7 +683,7 @@ def main():
     elif args.real_data_dir:
         # All-joints CSV mode — auto-convert motor CSVs if needed
         sage_dir = auto_convert_motor_csvs(args.real_data_dir, args.output_dir)
-        log_message(f"MODE: All-joints (CSV)")
+        log_message("MODE: All-joints (CSV)")
 
         # Determine which sysid joints actually exist in the real data.
         # When data has only one side (e.g. right arm), we load/score those joints
@@ -637,19 +694,39 @@ def main():
         data_joint_names = [n for n in sysid_joint_names if n in available_data_joints]
         if not data_joint_names:
             raise ValueError(
-                f"No overlap between sysid joints {sysid_joint_names} and "
-                f"data joints {sorted(available_data_joints)}"
+                f"No overlap between sysid joints {sysid_joint_names} and data joints {sorted(available_data_joints)}"
             )
         if len(data_joint_names) < len(sysid_joint_names):
             mirrored_joints = [n for n in sysid_joint_names if n not in available_data_joints]
-            log_message(f"Data has {len(data_joint_names)} of {len(sysid_joint_names)} sysid joints: {data_joint_names}")
+            log_message(
+                f"Data has {len(data_joint_names)} of {len(sysid_joint_names)} sysid joints: {data_joint_names}"
+            )
             log_message(f"Mirroring params to {len(mirrored_joints)} joints: {mirrored_joints}")
 
         commanded_nj, measured_nj = load_real_data(sage_dir, control_dt, data_joint_names)
+        measured_velocity_nj = np.zeros_like(measured_nj)
+        if args.objective != "mse":
+            try:
+                measured_velocity_nj = load_sage_joint_velocities(sage_dir, data_joint_names)
+            except ValueError as error:
+                if "missing columns: velocities" not in str(error):
+                    raise
+                log_message("WARNING: state_motor.csv has no velocities; deriving them from measured positions")
+                measured_velocity_nj = np.gradient(measured_nj, control_dt, axis=0)
+            if len(measured_velocity_nj) != len(measured_nj):
+                source_time = np.linspace(0.0, 1.0, len(measured_velocity_nj))
+                target_time = np.linspace(0.0, 1.0, len(measured_nj))
+                measured_velocity_nj = np.column_stack(
+                    [
+                        np.interp(target_time, source_time, measured_velocity_nj[:, j])
+                        for j in range(measured_velocity_nj.shape[1])
+                    ]
+                )
 
         if args.max_trajectory_len and len(commanded_nj) > args.max_trajectory_len:
-            commanded_nj = commanded_nj[:args.max_trajectory_len]
-            measured_nj = measured_nj[:args.max_trajectory_len]
+            commanded_nj = commanded_nj[: args.max_trajectory_len]
+            measured_nj = measured_nj[: args.max_trajectory_len]
+            measured_velocity_nj = measured_velocity_nj[: args.max_trajectory_len]
             log_message(f"Truncated to {args.max_trajectory_len} steps")
 
         trajectory_len = len(commanded_nj)
@@ -666,7 +743,8 @@ def main():
         gravity=(0.0, 0.0, -9.81),
     )
     _sim_section = _run_cfg.get("simulation", {})
-    from isaaclab_newton.physics import NewtonCfg, MJWarpSolverCfg
+    from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg
+
     sim_cfg.physics = NewtonCfg(
         solver_cfg=MJWarpSolverCfg(
             integrator=_sim_section.get("integrator", "implicitfast"),
@@ -681,8 +759,7 @@ def main():
     # Check that USD exists for UR10e
     if SceneCfgCls is Ur10eSysidSceneCfg and not os.path.isfile(_UR10_USD_PATH):
         raise FileNotFoundError(
-            f"UR10 USD not found at {_UR10_USD_PATH}\n"
-            "Place the UR10 USD asset at input/robot_models/ur10/ur10/ur10.usd"
+            f"UR10 USD not found at {_UR10_USD_PATH}\nPlace the UR10 USD asset at input/robot_models/ur10/ur10/ur10.usd"
         )
 
     scene_cfg = SceneCfgCls(num_envs=num_envs, env_spacing=4.0)
@@ -703,10 +780,12 @@ def main():
         log_message(f"Target joint: {args.joint_name} (sim index {target_joint_idx})")
         commanded_t = torch.tensor(commanded_1d, dtype=torch.float32, device=device)
         measured_t = torch.tensor(measured_1d, dtype=torch.float32, device=device)
+        measured_velocity_t = torch.tensor(measured_velocity_1d, dtype=torch.float32, device=device)
         start_pos_scalar = commanded_t[0]
     else:
         commanded_t = torch.tensor(commanded_nj, dtype=torch.float32, device=device)
         measured_t = torch.tensor(measured_nj, dtype=torch.float32, device=device)
+        measured_velocity_t = torch.tensor(measured_velocity_nj, dtype=torch.float32, device=device)
         start_pos_nj = commanded_t[0]  # (num_data_joints,)
 
         # Build data_joint_ids for scoring (sim indices of joints with real data)
@@ -743,12 +822,14 @@ def main():
         max_iterations=args.max_iter,
         epsilon=args.epsilon,
         joint_types=args.joints,
+        objective=args.objective,
     )
 
     os.makedirs(args.output_dir, exist_ok=True)
 
     # Write run summary
     from datetime import datetime
+
     _act_cfg = _run_cfg.get("actuator", {})
     _act_model_type = _act_cfg.get("model_type", "implicit")
     _act_info = {"model_type": _act_model_type}
@@ -758,11 +839,8 @@ def main():
         _yaml_file = _act_cfg.get("yaml_file")
         if _yaml_file:
             _act_info["yaml_file"] = _yaml_file
-            try:
-                from actuator_models import load_actuator_params
+            with contextlib.suppress(Exception):
                 _act_info["parameters"] = load_actuator_params(_yaml_file)
-            except Exception:
-                pass
     elif _mt == "lstm":
         _nf = _act_cfg.get("network_file")
         if _nf:
@@ -783,6 +861,10 @@ def main():
             "mirror": optimizer.mirror,
             "num_envs": args.num_envs,
             "max_iter": args.max_iter,
+            "objective": args.objective,
+            "mmd_num_features": args.mmd_num_features,
+            "mmd_seed": args.mmd_seed,
+            "mmd_chunk_size": args.mmd_chunk_size,
             "sigma": args.sigma,
             "epsilon": args.epsilon,
             "buffer_time": args.buffer_time,
@@ -842,8 +924,7 @@ def main():
                     _joint_name_map[jt] = sim_name
                     break
 
-    log_message(f"CMA-ES: {optimizer.num_params} params, {num_envs} envs, "
-                f"max {optimizer.max_iterations} gens")
+    log_message(f"CMA-ES: {optimizer.num_params} params, {num_envs} envs, max {optimizer.max_iterations} gens")
     log_message(f"Parameters: {optimizer.param_names}")
 
     # --- Helpers ---
@@ -900,9 +981,7 @@ def main():
                         continue
                     try:
                         _child = getattr(_obj, _attr)
-                        if not callable(_child) and not isinstance(
-                            _child, (int, float, str, bool, type(None))
-                        ):
+                        if not callable(_child) and not isinstance(_child, (int, float, str, bool, type(None))):
                             _next_queue.append((f"{_path}.{_attr}", _child))
                     except Exception:
                         pass
@@ -923,7 +1002,9 @@ def main():
                 "Newton model has no 'mujoco.dof_passive_damping' attribute. "
                 "Ensure Newton is using the MuJoCo Warp solver (solver_cfg.integrator = 'implicitfast')."
             )
-        log_message(f"Newton mujoco.dof_passive_damping available (shape: {_newton_model.mujoco.dof_passive_damping.shape})")
+        log_message(
+            f"Newton mujoco.dof_passive_damping available (shape: {_newton_model.mujoco.dof_passive_damping.shape})"
+        )
 
     def _write_viscous_friction(vals: torch.Tensor):
         """Write passive viscous damping directly to Newton's mujoco.dof_passive_damping.
@@ -967,11 +1048,14 @@ def main():
             # Cache the values for external Stribeck computation; zero out Newton's
             robot.write_joint_friction_coefficient_to_sim_index(
                 joint_friction_coeff=torch.zeros_like(vals),
-                joint_ids=arm_joint_ids_tensor, env_ids=_env_ids,
+                joint_ids=arm_joint_ids_tensor,
+                env_ids=_env_ids,
             )
         else:
             robot.write_joint_friction_coefficient_to_sim_index(
-                joint_friction_coeff=vals, joint_ids=arm_joint_ids_tensor, env_ids=_env_ids,
+                joint_friction_coeff=vals,
+                joint_ids=arm_joint_ids_tensor,
+                env_ids=_env_ids,
             )
 
     # Cache for dynamic_friction values (needed for Stribeck torque computation)
@@ -995,12 +1079,18 @@ def main():
         robot.set_joint_effort_target_index(target=effort)
 
     _PARAM_WRITERS = {
-        "armature":          lambda vals: robot.write_joint_armature_to_sim_index(armature=vals, joint_ids=arm_joint_ids_tensor, env_ids=_env_ids),
-        "dynamic_friction":  _cache_and_write_dynamic_friction,
-        "viscous_friction":  _write_viscous_friction,
+        "armature": lambda vals: robot.write_joint_armature_to_sim_index(
+            armature=vals, joint_ids=arm_joint_ids_tensor, env_ids=_env_ids
+        ),
+        "dynamic_friction": _cache_and_write_dynamic_friction,
+        "viscous_friction": _write_viscous_friction,
         "stribeck_velocity": _cache_stribeck_velocity,
-        "stiffness":         lambda vals: robot.write_joint_stiffness_to_sim_index(stiffness=vals, joint_ids=arm_joint_ids_tensor, env_ids=_env_ids),
-        "damping":           lambda vals: robot.write_joint_damping_to_sim_index(damping=vals, joint_ids=arm_joint_ids_tensor, env_ids=_env_ids),
+        "stiffness": lambda vals: robot.write_joint_stiffness_to_sim_index(
+            stiffness=vals, joint_ids=arm_joint_ids_tensor, env_ids=_env_ids
+        ),
+        "damping": lambda vals: robot.write_joint_damping_to_sim_index(
+            damping=vals, joint_ids=arm_joint_ids_tensor, env_ids=_env_ids
+        ),
     }
 
     def write_params_to_envs():
@@ -1025,7 +1115,9 @@ def main():
             joint_pos[:, data_joint_ids_tensor] = start_pos_nj.unsqueeze(0).expand(num_envs, -1)
             joint_vel[:, data_joint_ids_tensor] = 0.0
             if has_mirrors:
-                joint_pos[:, mirror_joint_ids_tensor] = start_pos_nj[mirror_data_indices_tensor].unsqueeze(0).expand(num_envs, -1)
+                joint_pos[:, mirror_joint_ids_tensor] = (
+                    start_pos_nj[mirror_data_indices_tensor].unsqueeze(0).expand(num_envs, -1)
+                )
                 joint_vel[:, mirror_joint_ids_tensor] = 0.0
         robot.write_joint_state_to_sim(joint_pos, joint_vel)
         scene.write_data_to_sim()
@@ -1035,20 +1127,32 @@ def main():
     # --- Optimization loop ---
     buffer_steps = int(args.buffer_time / control_dt)
     total_sim_steps = (buffer_steps + trajectory_len) * divisor
-    log_message(f"Sim steps per generation: {total_sim_steps} "
-                f"(buffer {buffer_steps * divisor} + trajectory {trajectory_len * divisor}) "
-                f"x {num_envs} envs")
+    log_message(
+        f"Sim steps per generation: {total_sim_steps} "
+        f"(buffer {buffer_steps * divisor} + trajectory {trajectory_len * divisor}) "
+        f"x {num_envs} envs"
+    )
 
-    pbar = tqdm(range(optimizer.max_iterations), desc="CMA-ES", unit="gen",
-                bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}] {postfix}")
+    score_label = {"mse": "MSE", "wasserstein": "Wasserstein", "mmd": "MMD^2"}[args.objective]
+    pbar = tqdm(
+        range(optimizer.max_iterations),
+        desc="CMA-ES",
+        unit="gen",
+        bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}] {postfix}",
+    )
     for gen in pbar:
         optimizer.sample_population()
         write_params_to_envs()
         reset_envs()
 
         # Inner progress bar for sim steps within a generation
-        inner_pbar = tqdm(total=total_sim_steps, desc=f"  Gen {gen}", unit="step",
-                          leave=False, bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]")
+        inner_pbar = tqdm(
+            total=total_sim_steps,
+            desc=f"  Gen {gen}",
+            unit="step",
+            leave=False,
+            bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]",
+        )
 
         # Buffer: hold at start to settle
         for step in range(buffer_steps * divisor):
@@ -1059,7 +1163,9 @@ def main():
                 else:
                     target[:, data_joint_ids_tensor] = start_pos_nj.unsqueeze(0).expand(num_envs, -1)
                     if has_mirrors:
-                        target[:, mirror_joint_ids_tensor] = start_pos_nj[mirror_data_indices_tensor].unsqueeze(0).expand(num_envs, -1)
+                        target[:, mirror_joint_ids_tensor] = (
+                            start_pos_nj[mirror_data_indices_tensor].unsqueeze(0).expand(num_envs, -1)
+                        )
                 robot.set_joint_position_target_index(target=target)
             sim_step()
             inner_pbar.update(1)
@@ -1075,6 +1181,12 @@ def main():
                     cmd_buffer.append(start_pos_nj.clone())
         else:
             cmd_buffer = None
+        if args.objective != "mse":
+            score_joint_count = 1 if single_joint_mode else len(data_joint_ids)
+            sim_position_trace = torch.empty(
+                (num_envs, trajectory_len, score_joint_count), dtype=torch.float32, device=device
+            )
+            sim_velocity_trace = torch.empty_like(sim_position_trace)
 
         # Replay trajectory
         for t in range(trajectory_len * divisor):
@@ -1097,29 +1209,61 @@ def main():
                     target[:, target_joint_idx] = delayed_cmd
                     robot.set_joint_position_target_index(target=target)
                     sim_pos = to_torch(robot.data.joint_pos)[:, target_joint_idx]
-                    real_pos = measured_t[index]
-                    diff = sim_pos - real_pos
-                    optimizer.scores += diff * diff
-                    optimizer._score_steps += 1
+                    sim_vel = to_torch(robot.data.joint_vel)[:, target_joint_idx]
+                    if args.objective == "mse":
+                        real_pos = measured_t[index]
+                        diff = sim_pos - real_pos
+                        optimizer.scores += diff * diff
+                        optimizer._score_steps += 1
+                    else:
+                        sim_position_trace[:, index, 0] = sim_pos
+                        sim_velocity_trace[:, index, 0] = sim_vel
                 else:
                     target[:, data_joint_ids_tensor] = delayed_cmd.unsqueeze(0).expand(num_envs, -1)
                     if has_mirrors:
-                        target[:, mirror_joint_ids_tensor] = delayed_cmd[mirror_data_indices_tensor].unsqueeze(0).expand(num_envs, -1)
+                        target[:, mirror_joint_ids_tensor] = (
+                            delayed_cmd[mirror_data_indices_tensor].unsqueeze(0).expand(num_envs, -1)
+                        )
                     robot.set_joint_position_target_index(target=target)
                     sim_pos = to_torch(robot.data.joint_pos)[:, data_joint_ids_tensor]
-                    optimizer.accumulate_score(sim_pos, measured_t[index])
+                    sim_vel = to_torch(robot.data.joint_vel)[:, data_joint_ids_tensor]
+                    if args.objective == "mse":
+                        optimizer.accumulate_score(sim_pos, measured_t[index])
+                    else:
+                        sim_position_trace[:, index] = sim_pos
+                        sim_velocity_trace[:, index] = sim_vel
 
             sim_step()
             inner_pbar.update(1)
 
         inner_pbar.close()
 
+        if args.objective != "mse":
+            real_position_trace = measured_t.unsqueeze(-1) if single_joint_mode else measured_t
+            real_velocity_trace = measured_velocity_t.unsqueeze(-1) if single_joint_mode else measured_velocity_t
+            optimizer.scores.copy_(
+                compute_batched_distributional_score(
+                    sim_position_trace,
+                    real_position_trace,
+                    sim_velocity_trace,
+                    real_velocity_trace,
+                    objective=args.objective,
+                    num_features=args.mmd_num_features,
+                    seed=args.mmd_seed,
+                    chunk_size=args.mmd_chunk_size,
+                )
+            )
+            optimizer._score_steps = 1
+
         converged = optimizer.evolve()
-        pbar.set_postfix(best_mse=f"{optimizer._best_score:.6f}")
+        if args.objective == "mse":
+            pbar.set_postfix(best_mse=f"{optimizer._best_score:.6f}")
+        else:
+            pbar.set_postfix(best_score=f"{optimizer._best_score:.6f}")
 
         if gen % args.log_interval == 0 or converged:
             best = optimizer.get_best_params()
-            parts = [f"Gen {gen:4d} | best MSE: {optimizer._best_score:.6f}"]
+            parts = [f"Gen {gen:4d} | best {score_label}: {optimizer._best_score:.6f}"]
             for prop in optimizer.property_names:
                 vals = [best[prop][jt] for jt in optimizer.joint_types]
                 parts.append(f"{prop}: {vals}")
@@ -1147,7 +1291,7 @@ def main():
     with open(best_params_file, "w") as f:
         yaml.dump(best_params, f, default_flow_style=False, sort_keys=False)
     log_message(f"\nBest parameters saved to {best_params_file}")
-    log_message(f"Best MSE: {optimizer._best_score:.6f}")
+    log_message(f"Best {score_label}: {optimizer._best_score:.6f}")
 
     actuator_yaml = robot_cfg["actuator_yaml"]
     log_message(f"\n--- Copy to {actuator_yaml} ---")

@@ -61,7 +61,7 @@ This repo includes scripts for **system identification (sysid)** and **sim-to-re
 
 ### SysID (`scripts/sysid/`)
 
-CMA-ES optimization of robot actuator parameters (armature, friction, viscous damping, PD gains). Replays real robot data in N parallel sim environments and minimizes position MSE vs measured response.
+CMA-ES optimization of robot actuator parameters (armature, friction, viscous damping, PD gains). Replays real robot data in N parallel sim environments and minimizes position MSE by default, with optional Wasserstein or RBF-MMD² position/velocity distribution objectives.
 
 - **Supported robots**: H1 (mirrored left/right arms), UR10e
 - **Input modes**: Single-joint parquet chirp files, multi-joint CSVs (control.csv + state_motor.csv), raw motor CSVs (auto-converted)
@@ -72,10 +72,10 @@ See [`scripts/sysid/README.md`](scripts/sysid/README.md) for full documentation.
 
 ### Sim2Real Gap Estimation (`scripts/sim2real_gap/`)
 
-Sim-to-real actuator gap estimation with the Newton physics backend. Two-stage workflow: **benchmark** replays joint motion trajectories in Newton simulation and records sim joint states; **analysis** compares sim vs real data to quantify the actuator gap. 
+Sim-to-real actuator gap estimation with the Newton physics backend. Two-stage workflow: **benchmark** replays joint motion trajectories in Newton simulation and records sim joint states; **analysis** compares sim vs real data to quantify the actuator gap.
 
 - **Benchmark**: Runs motions through multiple actuator models (implicit PD, DC motor, LSTM/GRU) and outputs sim joint states
-- **Analysis**: Per-joint RMSE, correlation, cosine similarity plots and metrics comparing sim vs real
+- **Analysis**: Per-joint temporal metrics plus Wasserstein and approximate RBF-MMD² distributional metrics comparing sim vs real
 - **Auto-conversion**: Motor CSVs from sysid experiments are auto-converted to the expected format
 
 See [`scripts/sim2real_gap/README.md`](scripts/sim2real_gap/README.md) for full documentation. Based on: [SAGE](https://github.com/isaac-sim2real/sage)

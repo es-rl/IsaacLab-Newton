@@ -1,3 +1,8 @@
+# Copyright (c) 2022-2026, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
 """Run SAGE analysis comparing Newton sim data with real robot data.
 
 This script wraps sage.analysis to compare CSV output from run_benchmark.py
@@ -34,13 +39,19 @@ from sage.analysis import RobotDataComparator
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "input"))
 from actuator_models import load_actuator_params
+from distributional_report import compute_motion_source_rows, write_distributional_metrics_csv
 from run_configs import load_run_cfg
 
 # Known actuator suffixes (must match newton_benchmark.py suffix_map values)
 ACTUATOR_SUFFIXES = (
-    "_implicit", "_dcmotor",
-    "_lstm_perjoint", "_lstm", "_gru_perjoint", "_gru",
-    "_fmu", "_actuatornetfmu",
+    "_implicit",
+    "_dcmotor",
+    "_lstm_perjoint",
+    "_lstm",
+    "_gru_perjoint",
+    "_gru",
+    "_fmu",
+    "_actuatornetfmu",
 )
 
 # Fallback robot name -> actuator YAML (used if run config has no actuator section)
@@ -182,51 +193,41 @@ def _plot_comparison_data_sim_on_top(self, axes, sim_cmd, sim_state, real_cmd, r
     sim_cmd_t = _time_to_seconds(sim_cmd["time_since_zero"])
     sim_state_t = _time_to_seconds(sim_state["time_since_zero"])
 
-    axes[0].plot(
-        real_cmd_t, real_cmd[f"positions_{joint_name}"], "#ffcccb", label="Real Command Position"
-    )
-    axes[0].plot(
-        real_state_t, real_state[f"positions_{joint_name}"], "r--", label="Real Position"
-    )
-    axes[0].plot(
-        sim_cmd_t, sim_cmd[f"positions_{joint_name}"], "#add8e6", label="Sim Command Position"
-    )
-    axes[0].plot(
-        sim_state_t, sim_state[f"positions_{joint_name}"], "b--", label="Sim Position"
-    )
+    axes[0].plot(real_cmd_t, real_cmd[f"positions_{joint_name}"], "#ffcccb", label="Real Command Position")
+    axes[0].plot(real_state_t, real_state[f"positions_{joint_name}"], "r--", label="Real Position")
+    axes[0].plot(sim_cmd_t, sim_cmd[f"positions_{joint_name}"], "#add8e6", label="Sim Command Position")
+    axes[0].plot(sim_state_t, sim_state[f"positions_{joint_name}"], "b--", label="Sim Position")
     pos_rmse = _compute_rmse(
-        sim_state_t, sim_state[f"positions_{joint_name}"],
-        real_state_t, real_state[f"positions_{joint_name}"],
+        sim_state_t,
+        sim_state[f"positions_{joint_name}"],
+        real_state_t,
+        real_state[f"positions_{joint_name}"],
     )
     axes[0].set_title(f"{plot_titles[0]}  (RMSE: {pos_rmse:.4f} rad)")
     axes[0].legend()
     axes[0].grid(True)
 
     # Velocity subplot
-    axes[1].plot(
-        real_state_t, real_state[f"velocities_{joint_name}"], "r--", label="Real Velocity"
-    )
-    axes[1].plot(
-        sim_state_t, sim_state[f"velocities_{joint_name}"], "b--", label="Sim Velocity"
-    )
+    axes[1].plot(real_state_t, real_state[f"velocities_{joint_name}"], "r--", label="Real Velocity")
+    axes[1].plot(sim_state_t, sim_state[f"velocities_{joint_name}"], "b--", label="Sim Velocity")
     vel_rmse = _compute_rmse(
-        sim_state_t, sim_state[f"velocities_{joint_name}"],
-        real_state_t, real_state[f"velocities_{joint_name}"],
+        sim_state_t,
+        sim_state[f"velocities_{joint_name}"],
+        real_state_t,
+        real_state[f"velocities_{joint_name}"],
     )
     axes[1].set_title(f"{plot_titles[1]}  (RMSE: {vel_rmse:.4f} rad/s)")
     axes[1].legend()
     axes[1].grid(True)
 
     # Torque subplot
-    axes[2].plot(
-        real_state_t, real_state[f"torques_{joint_name}"], "r--", label="Real Torque"
-    )
-    axes[2].plot(
-        sim_state_t, sim_state[f"torques_{joint_name}"], "b--", label="Sim Torque"
-    )
+    axes[2].plot(real_state_t, real_state[f"torques_{joint_name}"], "r--", label="Real Torque")
+    axes[2].plot(sim_state_t, sim_state[f"torques_{joint_name}"], "b--", label="Sim Torque")
     torque_rmse = _compute_rmse(
-        sim_state_t, sim_state[f"torques_{joint_name}"],
-        real_state_t, real_state[f"torques_{joint_name}"],
+        sim_state_t,
+        sim_state[f"torques_{joint_name}"],
+        real_state_t,
+        real_state[f"torques_{joint_name}"],
     )
     axes[2].set_title(f"{plot_titles[2]}  (RMSE: {torque_rmse:.4f} Nm)")
     axes[2].legend()
@@ -236,7 +237,9 @@ def _plot_comparison_data_sim_on_top(self, axes, sim_cmd, sim_state, real_cmd, r
     params_text = _build_params_text(joint_name)
     if params_text:
         axes[0].text(
-            0.01, 0.97, params_text,
+            0.01,
+            0.97,
+            params_text,
             transform=axes[0].transAxes,
             fontsize=8,
             fontfamily="monospace",
@@ -287,7 +290,6 @@ def _create_real_symlinks(result_folder, robot_name, motion_source):
     # actuator name, and real data lives one level up without that subfolder.
     parts = motion_source.split("/")
     if len(parts) >= 2:
-        actuator_part = parts[-1]
         # Strip the actuator part to get the base motion_source
         base_motion_source = "/".join(parts[:-1])
         real_parent = os.path.join(result_folder, "real", robot_name, base_motion_source)
@@ -423,10 +425,7 @@ def _group_has_matching_motions(result_folder, robot_name, motion_source, motion
     if not os.path.isdir(sim_dir):
         return False
 
-    sim_motions = [
-        d for d in os.listdir(sim_dir)
-        if _is_motion_folder(os.path.join(sim_dir, d))
-    ]
+    sim_motions = [d for d in os.listdir(sim_dir) if _is_motion_folder(os.path.join(sim_dir, d))]
     if not sim_motions:
         return False
 
@@ -463,10 +462,7 @@ def _resolve_motion_names(result_folder, robot_name, motion_source, motion_names
         return motion_names_arg
 
     # Only consider directories that are actual motion folders (have control.csv)
-    sim_motions = sorted(
-        d for d in os.listdir(sim_dir)
-        if _is_motion_folder(os.path.join(sim_dir, d))
-    )
+    sim_motions = sorted(d for d in os.listdir(sim_dir) if _is_motion_folder(os.path.join(sim_dir, d)))
 
     # For '*', enumerate sim folders explicitly so SAGE doesn't discover
     # unsuffixed real folders that have no sim counterpart.
@@ -483,6 +479,7 @@ def _resolve_motion_names(result_folder, robot_name, motion_source, motion_names
         # Glob/wildcard pattern (e.g. "*elbow*", "EC*")
         if "*" in name or "?" in name:
             import fnmatch
+
             # Match against sim motions (with suffix) and base names (without suffix)
             for sm in sim_motions:
                 if fnmatch.fnmatch(sm, name):
@@ -512,19 +509,47 @@ def _resolve_motion_names(result_folder, robot_name, motion_source, motion_names
     return ",".join(resolved)
 
 
-def main():
+def main():  # noqa: C901
     parser = argparse.ArgumentParser(description="SAGE analysis (Newton sim vs real robot)")
     parser.add_argument("--robot-name", type=str, default="h1", help="Robot name")
     parser.add_argument(
-        "--motion-names", type=str, default="*",
+        "--motion-names",
+        type=str,
+        default="*",
         help="Motion names to analyze (comma-separated, or '*' for all). "
         "Base names without actuator suffix are auto-resolved.",
     )
     parser.add_argument("--valid-joints-file", type=str, default=None, help="Path to valid joints file")
-    parser.add_argument("--result-folder", type=str, default=None, help="Root folder with sim/ and real/ subdirs (default: from run config)")
-    parser.add_argument("--output-dir", type=str, default=None, help="Output directory for analysis results (default: from run config)")
+    parser.add_argument(
+        "--result-folder",
+        type=str,
+        default=None,
+        help="Root folder with sim/ and real/ subdirs (default: from run config)",
+    )
+    parser.add_argument(
+        "--output-dir", type=str, default=None, help="Output directory for analysis results (default: from run config)"
+    )
     parser.add_argument("--sample-dt", type=float, default=None, help="Sample timestep for comparison (seconds)")
     parser.add_argument("--metrics-file", type=str, default="metrics_summary.xlsx", help="Metrics output filename")
+    parser.add_argument(
+        "--distributional_metrics_file",
+        type=str,
+        default=None,
+        help="Distributional metrics CSV filename (default: distributional_metrics.csv)",
+    )
+    parser.add_argument(
+        "--mmd_num_features",
+        type=int,
+        default=None,
+        help="Random Fourier feature count for approximate RBF-MMD (default: 256)",
+    )
+    parser.add_argument("--mmd_seed", type=int, default=None, help="Random Fourier feature seed (default: 0)")
+    parser.add_argument(
+        "--mmd_chunk_size",
+        type=int,
+        default=None,
+        help="Maximum samples embedded in one RBF-MMD operation (default: 1024)",
+    )
     args = parser.parse_args()
 
     # Load run config; CLI args override config values
@@ -550,6 +575,20 @@ def main():
         args.output_dir = _analysis_cfg.get("output_dir")
     if args.sample_dt is None:
         args.sample_dt = _analysis_cfg.get("sample_dt", 0.005)
+    if args.distributional_metrics_file is None:
+        args.distributional_metrics_file = _analysis_cfg.get(
+            "distributional_metrics_file", "distributional_metrics.csv"
+        )
+    if args.mmd_num_features is None:
+        args.mmd_num_features = int(_analysis_cfg.get("mmd_num_features", 256))
+    if args.mmd_seed is None:
+        args.mmd_seed = int(_analysis_cfg.get("mmd_seed", 0))
+    if args.mmd_chunk_size is None:
+        args.mmd_chunk_size = int(_analysis_cfg.get("mmd_chunk_size", 1024))
+    if args.mmd_num_features <= 0:
+        parser.error("--mmd_num_features must be positive")
+    if args.mmd_chunk_size <= 0:
+        parser.error("--mmd_chunk_size must be positive")
 
     # Validate required args after config merge
     if not args.result_folder:
@@ -577,8 +616,7 @@ def main():
             print(f"[Analysis] Actuator model: LSTM/GRU per-joint — {nf}")
     else:
         # Implicit / DCMotor: load actuator YAML for PD param annotations
-        actuator_yaml = (_actuator_cfg.get("yaml_file")
-                         or _ACTUATOR_YAML_MAP.get(args.robot_name))
+        actuator_yaml = _actuator_cfg.get("yaml_file") or _ACTUATOR_YAML_MAP.get(args.robot_name)
         if actuator_yaml:
             try:
                 _actuator_params = load_actuator_params(actuator_yaml)
@@ -591,9 +629,7 @@ def main():
     # Discover motion sources — handles both flat and nested directory structures.
     # Flat:   sim/h1/custom/{motion_name}/control.csv    -> motion_source = "custom"
     # Nested: sim/h1/custom/elbow/{motion_name}/control.csv -> motion_source = "custom/elbow"
-    motion_sources = _discover_motion_sources(
-        args.result_folder, args.robot_name, args.motion_source
-    )
+    motion_sources = _discover_motion_sources(args.result_folder, args.robot_name, args.motion_source)
     # Filter groups: skip any group where no sim motions match motion_names.
     # e.g. motion_names="*elbow*" will skip shoulder_yaw groups that have no elbow motions.
     if args.motion_names != "*" and len(motion_sources) > 1:
@@ -605,7 +641,10 @@ def main():
             skipped = len(motion_sources) - len(filtered)
             motion_sources = filtered
             if skipped:
-                print(f"[Analysis] motion_names filter '{args.motion_names}': kept {len(filtered)} groups, skipped {skipped}")
+                print(
+                    f"[Analysis] motion_names filter '{args.motion_names}': kept {len(filtered)} groups, "
+                    f"skipped {skipped}"
+                )
 
     if len(motion_sources) > 1:
         print(f"[Analysis] Detected nested structure with {len(motion_sources)} groups:")
@@ -613,18 +652,17 @@ def main():
             print(f"  {ms}")
 
     all_created_links = []
+    distributional_rows = []
 
     for motion_source in motion_sources:
         if len(motion_sources) > 1:
             group_label = motion_source.replace(f"{args.motion_source}/", "")
-            print(f"\n{'='*60}")
+            print(f"\n{'=' * 60}")
             print(f"[Analysis] Processing group: {group_label}")
-            print(f"{'='*60}")
+            print(f"{'=' * 60}")
 
         # Resolve base motion names to suffixed sim folder names
-        resolved_names = _resolve_motion_names(
-            args.result_folder, args.robot_name, motion_source, args.motion_names
-        )
+        resolved_names = _resolve_motion_names(args.result_folder, args.robot_name, motion_source, args.motion_names)
 
         # Ensure sim directory exists (benchmark should have created it already)
         sim_path = os.path.join(args.result_folder, "sim", args.robot_name, motion_source)
@@ -644,9 +682,7 @@ def main():
         plots_base = os.path.join(args.output_dir, "metrics", args.robot_name, motion_source)
         existing_folders = set()
         if os.path.isdir(plots_base):
-            existing_folders = set(
-                d for d in os.listdir(plots_base) if os.path.isdir(os.path.join(plots_base, d))
-            )
+            existing_folders = set(d for d in os.listdir(plots_base) if os.path.isdir(os.path.join(plots_base, d)))
 
         try:
             comparator = RobotDataComparator(
@@ -664,6 +700,24 @@ def main():
             # Rename output folders to include actuator suffix (SAGE uses base names)
             _rename_output_with_suffixes(args.output_dir, args.result_folder, args.robot_name, motion_source)
 
+            try:
+                distributional_rows.extend(
+                    compute_motion_source_rows(
+                        result_folder=args.result_folder,
+                        robot_name=args.robot_name,
+                        motion_source=motion_source,
+                        motion_names=resolved_names,
+                        num_features=args.mmd_num_features,
+                        seed=args.mmd_seed,
+                        chunk_size=args.mmd_chunk_size,
+                    )
+                )
+            except Exception as distributional_error:
+                print(f"[Analysis] Distributional metrics failed for {motion_source}: {distributional_error}")
+                import traceback
+
+                traceback.print_exc()
+
             # Print output locations — only show folders created by this run
             metrics_path = os.path.join(args.output_dir, args.metrics_file)
             print(f"\n[RESULTS] Metrics: {os.path.abspath(metrics_path)}")
@@ -676,10 +730,17 @@ def main():
         except Exception as e:
             print(f"[Analysis] Error processing {motion_source}: {e}")
             import traceback
+
             traceback.print_exc()
             continue
 
     _cleanup_symlinks(all_created_links)
+    if distributional_rows:
+        distributional_path = os.path.join(args.output_dir, args.distributional_metrics_file)
+        write_distributional_metrics_csv(distributional_path, distributional_rows)
+        print(f"[RESULTS] Distributional metrics: {os.path.abspath(distributional_path)}")
+    else:
+        print("[Analysis] WARNING: No distributional metrics were produced")
 
 
 if __name__ == "__main__":

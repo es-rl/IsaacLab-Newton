@@ -1,3 +1,8 @@
+# Copyright (c) 2022-2026, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
 # H1 runtime configuration
 # CLI arguments override values set here.
 
@@ -6,10 +11,10 @@ simulation:
   control_freq: 500         # Hz
   render_freq: 500          # Hz
   integrator: implicitfast  # Newton solver integrator
-  solver_iterations: 10    
-  
-  
-  
+  solver_iterations: 10
+
+
+
    # Newton solver iterations
   ls_iterations: 10         # Newton line-search iterations
 
@@ -35,6 +40,10 @@ analysis:
   output_dir: output/sim2real_analysis       # analysis plots and metrics
   sample_dt: 0.005                       # seconds — comparison timestep
   motion_names: "EC01_elbow_chirp"
+  distributional_metrics_file: distributional_metrics.csv
+  mmd_num_features: 256
+  mmd_seed: 0
+  mmd_chunk_size: 1024
 #"*elbow*"    # specific motions to analyze (default: all). Also accepts comma-separated string.
 
 #-------------------------------------------------------------------------------------
@@ -88,10 +97,14 @@ sysid:
   output_dir: elbow
   bounds_yaml: h1/h1_arms_sysid_bounds.yaml                    # path relative to input/run_configs/
   real_data_dir: input/sysid_data/h1/arm_march2026/elbow       # motor CSV dir (auto-converted) or SAGE dir
-  joints: [elbow] 
+  joints: [elbow]
   #[elbow, shoulder_pitch, shoulder_roll, shoulder_yaw]        # "full" = all joint types, or list: [elbow, shoulder_pitch]
   num_envs: 64
   max_iter: 200
   sigma: 0.5
   epsilon: 0.01
   buffer_time: 2.0                                             # seconds — settle before replay
+  objective: mse                                               # mse | wasserstein | mmd
+  mmd_num_features: 256
+  mmd_seed: 0
+  mmd_chunk_size: 1024

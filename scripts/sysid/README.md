@@ -2,9 +2,14 @@
 
 Automated motor parameter optimization for robot actuators.
 Runs N parallel sim environments with different candidate parameters,
-replays real robot data, and minimizes position MSE vs real measurements.
+replays real robot data, and minimizes a selected sim-to-real objective. The
+default remains time-aligned position MSE. Paper-inspired distributional
+objectives can instead compare normalized position and velocity distributions
+with Wasserstein-1 distance or deterministic approximate RBF-MMD².
 
-Based on: [PACE Sim2Real](https://github.com/leggedrobotics/pace-sim2real) (ETH Zurich)
+Based on: [PACE Sim2Real](https://github.com/leggedrobotics/pace-sim2real) (ETH Zurich).
+The distributional objectives follow the evaluation approach in
+[High-Performance Reinforcement Learning on Spot](https://arxiv.org/abs/2504.17857).
 
 ## Motor Model
 
@@ -277,7 +282,7 @@ Output goes to `output/sysid/so101/full/`:
 | File | Contents |
 |---|---|
 | `best_params.yaml` | Optimal `armature`, `dynamic_friction`, `viscous_friction` per joint |
-| `optimization_log.csv` | Per-generation best/mean MSE and parameter values |
+| `optimization_log.csv` | Per-generation best/mean objective score and parameter values |
 | `run_summary.yaml` | Sim settings + bounds + actuator model snapshot |
 
 Override the data path or joint scope without editing the YAML:
@@ -405,6 +410,10 @@ sysid:
   sigma: 0.5
   epsilon: 0.01
   buffer_time: 2.0
+  objective: mse             # mse | wasserstein | mmd
+  mmd_num_features: 256      # deterministic RBF random features
+  mmd_seed: 0
+  mmd_chunk_size: 1024
 ```
 
 Running `--robot-name h1` picks up all sysid settings from the YAML. Use CLI args only to override:
@@ -443,6 +452,10 @@ python scripts/sysid/run_sysid.py \
 | `--num-envs` | 64* | Parallel environments = CMA-ES population size |
 | `--max-iter` | 200* | Maximum CMA-ES generations |
 | `--sigma` | 0.5* | CMA-ES initial step size |
+| `--objective` | `mse`* | Score optimized by CMA-ES: `mse`, `wasserstein`, or `mmd` |
+| `--mmd_num_features` | 256* | Random Fourier feature count for approximate RBF-MMD² |
+| `--mmd_seed` | 0* | Deterministic random Fourier feature seed |
+| `--mmd_chunk_size` | 1024* | Samples embedded per MMD chunk to bound memory use |
 | `--epsilon` | 0.01* | Convergence threshold |
 | `--config` | auto* | Parameter bounds YAML (default: from `sysid.bounds_yaml` in run config) |
 | **Simulation:** | | |
@@ -452,6 +465,14 @@ python scripts/sysid/run_sysid.py \
 | `--max-trajectory-len` | all | Truncate trajectory to N steps |
 | `--output-dir` | auto* | Results directory (`output/sysid/{robot}/{output_dir or joints}`) |
 | `--headless` | off | Run without rendering |
+
+Wasserstein and MMD objectives collect joint position and velocity at control
+steps, normalize each joint-feature by the real reference mean and standard
+deviation, and average all normalized feature scores equally. Commands are not
+scored because SysID replays the same command into every candidate. MMD uses a
+seeded random-Fourier approximation with a median-heuristic bandwidth so its
+cost scales linearly with trajectory length instead of forming a quadratic
+kernel matrix.
 
 \* Defaults marked with \* are overridden by `input/run_configs/<robot>.yaml` when present. CLI args always take highest priority.
 
@@ -486,7 +507,7 @@ Results are written to `output/sysid/{robot_name}/{output_dir}/`. The `output_di
 |---|---|
 | `run_summary.yaml` | Timestamp, simulation settings, sysid config, bounds, and actuator model parameters |
 | `best_params.yaml` | Best J, b, c per joint type. Copy per-joint values into `input/actuator_models/h1/h1_arm_implicit.yaml` (supports per-joint dicts with regex keys). |
-| `optimization_log.csv` | Per-generation: best/mean MSE, all parameter values |
+| `optimization_log.csv` | Per-generation best/mean/min objective score and all parameter values. MSE runs retain the legacy MSE column names. |
 
 ## Actuator Model Training
 

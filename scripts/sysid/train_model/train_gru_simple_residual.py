@@ -663,7 +663,8 @@ def retrain_best(params: dict, epochs: int = N_FINAL_EPOCHS) -> float:
 
     # Evaluate best checkpoint on full dataset
     model.load_state_dict({k: v.to(DEVICE) for k, v in best_state.items()})
-    full_rmse = eval_stateful(model, tr_tensors + val_tensors, cl)
+    # Use larger inference chunks to avoid tiny batch-size-one GPU launches.
+    full_rmse = eval_stateful(model, tr_tensors + val_tensors, max(cl, 4096))
 
     model_path = os.path.join(SAVE_DIR, model_filename)
     stats_filename = model_filename.replace("_best.pt", "_stats.json")

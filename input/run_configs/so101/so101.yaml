@@ -35,6 +35,10 @@ analysis:
   output_dir: output/sim2real_analysis
   sample_dt: 0.005            # seconds - comparison timestep
   motion_names: "*"
+  distributional_metrics_file: distributional_metrics.csv
+  mmd_num_features: 256
+  mmd_seed: 0
+  mmd_chunk_size: 1024
 
 #-------------------------------------------------------------------------------------
 # Actuator model for benchmark joints. SO-101 ships with implicit ImplicitActuator
@@ -54,3 +58,7 @@ sysid:
   sigma: 0.5
   epsilon: 0.001
   buffer_time: 2.0
+  objective: mse                    # mse | wasserstein | mmd
+  mmd_num_features: 256
+  mmd_seed: 0
+  mmd_chunk_size: 1024
