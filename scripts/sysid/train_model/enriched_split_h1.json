@@ -1,0 +1,81 @@
+{
+  "schema": "h1-arm-multijoint-split",
+  "version": 1,
+  "seed": 42,
+  "strategy": "stratified random by experiment type (chirp vs sine)",
+  "type_counts": {
+    "chirp": {
+      "train": 18,
+      "val": 2,
+      "test": 5
+    },
+    "sine": {
+      "train": 17,
+      "val": 3,
+      "test": 5
+    }
+  },
+  "counts": {
+    "train": 35,
+    "val": 5,
+    "test": 10,
+    "all": 50
+  },
+  "source_root": "/home/vbhavanantha/Desktop/UnitreeH1/data/multijoint/All motors moving",
+  "train": [
+    "C02_f0_1-0_5_a0_10_motor.csv",
+    "C03_f0_1-0_5_a0_20_motor.csv",
+    "C06_f0_1-1_0_a0_05_motor.csv",
+    "C07_f0_1-1_0_a0_10_motor.csv",
+    "C10_f0_1-1_0_a0_30_wave_motor.csv",
+    "C11_f0_1-1_5_a0_05_motor.csv",
+    "C12_f0_1-1_5_a0_10_motor.csv",
+    "C13_f0_1-1_5_a0_15_motor.csv",
+    "C14_f0_1-1_5_a0_20_motor.csv",
+    "C15_f0_1-1_5_a0_20_wave_motor.csv",
+    "C16_f0_3-1_5_a0_05_motor.csv",
+    "C17_f0_3-1_5_a0_10_motor.csv",
+    "C18_f0_3-1_5_a0_15_motor.csv",
+    "C19_f0_3-1_5_a0_20_motor.csv",
+    "C20_f0_3-1_5_a0_20_wave_motor.csv",
+    "C22_f0_1-1_0_a0_15_wave_motor.csv",
+    "C23_f0_1-1_5_a0_15_wave_motor.csv",
+    "C24_f0_3-1_5_a0_15_wave_motor.csv",
+    "S02_f0_3_a0_15_inphase_motor.csv",
+    "S03_f0_5_a0_15_inphase_motor.csv",
+    "S04_f1_0_a0_15_inphase_motor.csv",
+    "S07_f0_5_a0_10_inphase_motor.csv",
+    "S08_f0_5_a0_20_inphase_motor.csv",
+    "S10_f0_5_a0_40_inphase_motor.csv",
+    "S12_f0_3_a0_15_wave_motor.csv",
+    "S13_f0_5_a0_15_wave_motor.csv",
+    "S15_f1_5_a0_15_wave_motor.csv",
+    "S16_f0_1_a0_15_antiphase_motor.csv",
+    "S17_f0_3_a0_15_antiphase_motor.csv",
+    "S18_f0_5_a0_15_antiphase_motor.csv",
+    "S20_f1_5_a0_15_antiphase_motor.csv",
+    "S21_f0_2_a0_30_inphase_motor.csv",
+    "S22_f0_7_a0_20_wave_motor.csv",
+    "S23_f1_0_a0_10_wave_motor.csv",
+    "S25_f2_0_a0_05_inphase_motor.csv"
+  ],
+  "val": [
+    "C05_f0_1-0_5_a0_40_motor.csv",
+    "C25_f0_1-1_0_a0_25_wave_motor.csv",
+    "S05_f1_5_a0_15_inphase_motor.csv",
+    "S11_f0_1_a0_15_wave_motor.csv",
+    "S24_f1_5_a0_05_inphase_motor.csv"
+  ],
+  "test": [
+    "C01_f0_1-0_5_a0_05_motor.csv",
+    "C04_f0_1-0_5_a0_30_motor.csv",
+    "C08_f0_1-1_0_a0_20_motor.csv",
+    "C09_f0_1-1_0_a0_30_motor.csv",
+    "C21_f0_1-0_5_a0_15_wave_motor.csv",
+    "S01_f0_1_a0_15_inphase_motor.csv",
+    "S06_f0_5_a0_05_inphase_motor.csv",
+    "S09_f0_5_a0_30_inphase_motor.csv",
+    "S14_f1_0_a0_15_wave_motor.csv",
+    "S19_f1_0_a0_15_antiphase_motor.csv"
+  ]
+}

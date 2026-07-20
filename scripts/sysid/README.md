@@ -113,13 +113,13 @@ All dependencies are installed in the Docker image (`docker/Dockerfile.sysid`). 
 5. *(Optional)* Train a GRU actuator model per joint:
    ```bash
    # Standard GRU (full torque prediction)
-   python scripts/sysid/train_model/gru_model_train.py \
+   python scripts/sysid/train_model/train_gru_simple.py \
        --joint-type elbow \
        --data-dirs "/path/to/training/data" \
        --skip-optuna
 
    # Hybrid residual GRU (better closed-loop sim accuracy)
-   python scripts/sysid/train_model/hybrid_model_train.py \
+   python scripts/sysid/train_model/train_gru_simple_residual.py \
        --implicit-yaml input/actuator_models/h1/h1_arm_implicit.yaml \
        --joint-type elbow \
        --data-dirs "/path/to/training/data" \
@@ -490,16 +490,31 @@ Results are written to `output/sysid/{robot_name}/{output_dir}/`. The `output_di
 
 ## Actuator Model Training
 
-Training scripts live in `scripts/sysid/train_model/`. Both are standalone — no Newton, Isaac Lab, or MuJoCo required. Runs on any machine with PyTorch and a GPU.
+Training scripts live in `scripts/sysid/train_model/`. Two families are provided —
+see [`TRAINING_SCRIPTS.md`](train_model/TRAINING_SCRIPTS.md) for a full side-by-side
+comparison.
 
-Two model types are available:
+**Simple (3-feature)** — self-contained, runnable trainers. No Newton, Isaac Lab, or
+MuJoCo required; runs on any machine with PyTorch and a GPU.
 
 | Script | Model Type | Predicts | Use Case |
 |---|---|---|---|
-| `gru_model_train.py` | Standard GRU | Full torque | Best open-loop accuracy |
-| `hybrid_model_train.py` | Hybrid residual GRU | `tau_real - (kp * pos_error - kd * vel)` | Better closed-loop sim accuracy |
+| `train_gru_simple.py` | Standard GRU | Full torque | Best open-loop accuracy |
+| `train_gru_simple_residual.py` | Hybrid residual GRU | `tau_real - (kp * pos_error - kd * vel)` | Better closed-loop sim accuracy |
 
-Both use the same architecture (TorqueGRU: GRU + linear head, 3 inputs -> 1 output), stateful TBPTT training, and Optuna hyperparameter search.
+Both use the same architecture (`TorqueGRU`: GRU + linear head, 3 inputs -> 1 output),
+stateful TBPTT training, and Optuna hyperparameter search.
+
+**Enriched (24-feature) — reference implementations.** `train_gru_enriched_g1.py` and
+`train_gru_enriched_h1.py` are the exact trainers that produced the G1 full-torque
+and H1 PD-residual checkpoints. They share a 24-feature layout
+(`[q, position_error, velocity, PD_hint, qfrc_bias, prev_torque]` × 4 joints) and the
+`ForceResidualGRU` model. Their code is self-contained, but they require the
+original motion datasets plus precomputed `<motion>_qfrc_bias.npy` feature caches
+(not included), so they are kept for provenance/comparison and cannot be retrained
+from this repo alone. Selecting the resulting checkpoints at deploy time uses the
+existing `full_torque_enriched` and `hybrid_residual` model types in the run-config
+`actuator:` section (see the sim2real README).
 
 ### Standard GRU
 
@@ -507,19 +522,19 @@ Trains on full motor torque directly from [position, position_error, velocity] i
 
 ```bash
 # Train for elbow (quick, no Optuna)
-python scripts/sysid/train_model/gru_model_train.py \
+python scripts/sysid/train_model/train_gru_simple.py \
     --joint-type elbow \
     --data-dirs "/path/to/SysID Position 0" "/path/to/SysID Position 3" \
     --skip-optuna
 
 # Train for shoulder pitch with Optuna search
-python scripts/sysid/train_model/gru_model_train.py \
+python scripts/sysid/train_model/train_gru_simple.py \
     --joint-type shoulder_pitch \
     --data-dirs "/path/to/Config A" "/path/to/Config B" "/path/to/Config C" \
     --trials 30 --final-epochs 150
 
 # Generic column names (no joint prefix in CSVs)
-python scripts/sysid/train_model/gru_model_train.py \
+python scripts/sysid/train_model/train_gru_simple.py \
     --data-dirs "/path/to/data" \
     --skip-optuna
 ```
@@ -545,7 +560,7 @@ The residual's mean (stored in normalization stats) acts as an implicit **torque
 
 ```bash
 # Train with sysid params (subtracts PD + friction from residual)
-python scripts/sysid/train_model/hybrid_model_train.py \
+python scripts/sysid/train_model/train_gru_simple_residual.py \
     --implicit-yaml input/actuator_models/h1/h1_arm_sysid_implicit.yaml \
     --joint-type elbow \
     --data-dirs "/path/to/SysID Position 0" "/path/to/SysID Position 3" \
@@ -553,7 +568,7 @@ python scripts/sysid/train_model/hybrid_model_train.py \
     --skip-optuna
 
 # Train with default params (subtracts PD only, friction=0)
-python scripts/sysid/train_model/hybrid_model_train.py \
+python scripts/sysid/train_model/train_gru_simple_residual.py \
     --implicit-yaml input/actuator_models/h1/h1_arm_implicit.yaml \
     --joint-type elbow \
     --data-dirs "/path/to/SysID Position 0" "/path/to/SysID Position 3" \
@@ -561,7 +576,7 @@ python scripts/sysid/train_model/hybrid_model_train.py \
     --skip-optuna
 
 # Train for shoulder pitch with Optuna search
-python scripts/sysid/train_model/hybrid_model_train.py \
+python scripts/sysid/train_model/train_gru_simple_residual.py \
     --implicit-yaml input/actuator_models/h1/h1_arm_sysid_implicit.yaml \
     --joint-type shoulder_pitch \
     --data-dirs "/path/to/Config A" "/path/to/Config B" "/path/to/Config C" \

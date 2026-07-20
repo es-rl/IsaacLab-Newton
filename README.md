@@ -144,9 +144,12 @@ scripts/
 │   ├── convert_pkl_to_csv.py
 │   ├── convert_ur10_urdf.py
 │   ├── diagnose_newton_mapping.py
-│   └── train_model/             # GRU/hybrid model training
-│       ├── gru_model_train.py
-│       └── hybrid_model_train.py
+│   └── train_model/             # GRU model training (simple + enriched)
+│       ├── train_gru_simple.py          # 3-feat full-torque GRU
+│       ├── train_gru_simple_residual.py # 3-feat PD-residual GRU
+│       ├── train_gru_enriched_g1.py     # 24-feat G1 full-torque GRU (ref)
+│       ├── train_gru_enriched_h1.py     # 24-feat H1 PD-residual GRU (ref)
+│       └── TRAINING_SCRIPTS.md          # comparison of the trainers
 └── sim2real_gap/                # Sim2real gap benchmark & analysis
     ├── run_benchmark.py         # Newton sim playback
     ├── run_analysis.py          # Sim vs real comparison
