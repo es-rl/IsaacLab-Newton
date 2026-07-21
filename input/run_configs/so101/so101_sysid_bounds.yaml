@@ -4,8 +4,9 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 # SO-101 system identification parameter bounds.
-# 6 joint types (no left/right mirroring): Rotation, Pitch, Elbow,
-# Wrist_Pitch, Wrist_Roll, Jaw. CMA-ES optimizes these in normalized
+# The six legacy SAGE labels below are retained for compatibility with recorded
+# joint_list.txt files. run_sysid.py maps them to the calibrated USD's LeRobot
+# joint prims before applying parameters. CMA-ES optimizes them in normalized
 # [-1, 1] space with linear mapping to bounds.
 # Source of initial ranges: STS3215 servo datasheet - wide bounds for
 # customer's first-pass sysid; narrow after observing results.

@@ -256,10 +256,12 @@ delivered by your CMA-ES fit.
 ### Notes
 
 - `scripts/sim2real_gap/configs/so101_joints.yaml` and
-  `so101_valid_joints.txt` enumerate the six USD joint names
+  `so101_valid_joints.txt` retain the six legacy recording labels
   (`Rotation, Pitch, Elbow, Wrist_Pitch, Wrist_Roll, Jaw`) for SAGE's
-  strict joint-name matching. They ship with the toolbox; you do not
-  need to edit them.
+  strict joint-name matching. The benchmark maps them to the calibrated
+  USD prims (`shoulder_pan, shoulder_lift, elbow_flex, wrist_flex,
+  wrist_roll, gripper`) when it builds articulation indices. Existing
+  recordings therefore do not need to be rewritten.
 - The SO-101 USD is fixed-base, so `--fix-root` is the default and there
   is no torso/pelvis joint to suppress.
 - Motor torque in `state_motor.csv` must be in N·m; if your driver
@@ -344,7 +346,7 @@ Accepts both parquet files (benchtop motor data) and motor CSVs. When both forma
 |---|---|---|---|---|
 | `h1` | `H1BenchmarkSceneCfg` | `input/robot_models/h1_minimal/h1_minimal.usda` | `h1/h1_arm_implicit.yaml` | `configs/h1_valid_joints.txt` (19 joints) |
 | `ur10e` | `Ur10eBenchmarkSceneCfg` | `input/robot_models/ur10/ur10/ur10.usd` | `ur10e/ur10e_implicit.yaml` | `configs/ur10e_valid_joints.txt` (6 joints) |
-| `so101` | `So101BenchmarkSceneCfg` | `input/robot_models/so101/so101.usd` | `so101/so101_implicit.yaml` | `configs/so101_valid_joints.txt` (6 joints) |
+| `so101` | `So101BenchmarkSceneCfg` | `input/robot_models/so101/so101_no_camera_new_calib.usd` | `so101/so101_implicit.yaml` | `configs/so101_valid_joints.txt` (6 joints) |
 | `teststand` | `TestStandBenchmarkSceneCfg` | `input/robot_models/teststand/teststand.usda` | `teststand/teststand_implicit.yaml` | `configs/teststand_valid_joints.txt` (1 joint) |
 
 Robot selection is via `--robot-name`. Each robot has its own scene config class in `newton_benchmark.py`, selected at runtime via the `_BENCHMARK_ROBOT_CONFIGS` dict (same pattern as `_ROBOT_CONFIGS` in `run_sysid.py`). See [Adding a New Robot](#adding-a-new-robot) for how to add support for a new robot.

@@ -50,7 +50,9 @@ _H1_LOCAL_USD = os.path.abspath(
 _UR10_LOCAL_USD = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "../../input/robot_models/ur10/ur10/ur10.usd")
 )
-_SO101_LOCAL_USD = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../input/robot_models/so101/so101.usd"))
+_SO101_LOCAL_USD = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "../../input/robot_models/so101/so101_no_camera_new_calib.usd")
+)
 _TESTSTAND_LOCAL_USD = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "../../input/robot_models/teststand/teststand.usda")
 )
@@ -1168,12 +1170,12 @@ class So101BenchmarkSceneCfg(InteractiveSceneCfg):
         spawn=sim_utils.UsdFileCfg(usd_path=_SO101_LOCAL_USD),
         init_state=ArticulationCfg.InitialStateCfg(
             joint_pos={
-                "Rotation": 0.0,
-                "Pitch": 0.0,
-                "Elbow": 0.0,
-                "Wrist_Pitch": 0.0,
-                "Wrist_Roll": 0.0,
-                "Jaw": 0.0,
+                "shoulder_pan": 0.0,
+                "shoulder_lift": 0.0,
+                "elbow_flex": 0.0,
+                "wrist_flex": 0.0,
+                "wrist_roll": 0.0,
+                "gripper": 0.0,
             },
             joint_vel={".*": 0.0},
         ),
@@ -1326,6 +1328,15 @@ class G1BenchmarkSceneCfg(InteractiveSceneCfg):
 # ---------------------------------------------------------------------------
 # Robot-specific benchmark configurations
 # ---------------------------------------------------------------------------
+_SO101_JOINT_NAME_MAP = {
+    "Rotation": "shoulder_pan",
+    "Pitch": "shoulder_lift",
+    "Elbow": "elbow_flex",
+    "Wrist_Pitch": "wrist_flex",
+    "Wrist_Roll": "wrist_roll",
+    "Jaw": "gripper",
+}
+
 _G1_BENCHMARK_CFG = {
     "scene_cfg_cls": G1BenchmarkSceneCfg,
     "actuator_yaml": "g1/g1_arm_implicit.yaml",
@@ -1349,6 +1360,7 @@ _BENCHMARK_ROBOT_CONFIGS = {
     "so101": {
         "scene_cfg_cls": So101BenchmarkSceneCfg,
         "actuator_yaml": "so101/so101_implicit.yaml",
+        "joint_name_map": _SO101_JOINT_NAME_MAP,
     },
     "teststand": {
         "scene_cfg_cls": TestStandBenchmarkSceneCfg,

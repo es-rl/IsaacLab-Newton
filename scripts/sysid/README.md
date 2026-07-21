@@ -207,7 +207,7 @@ sysid against your own SO-101 motor recordings:
 
 | Asset | Path |
 |---|---|
-| USD (fixed-base, no free root joint) | `input/robot_models/so101/so101.usd` |
+| USD (fixed-base, no-camera, calibrated) | `input/robot_models/so101/so101_no_camera_new_calib.usd` |
 | Upstream MJCF | `input/robot_models/so101/so101_upstream.xml` |
 | Mesh STLs | `input/robot_models/so101/assets/*.stl` |
 | Actuator template (STS3215 datasheet) | `input/actuator_models/so101/so101_implicit.yaml` |
@@ -216,13 +216,17 @@ sysid against your own SO-101 motor recordings:
 | SAGE joints config (analysis) | `scripts/sim2real_gap/configs/so101_joints.yaml` |
 | Smoke test (no GPU) | `scripts/sysid/test/test_so101_smoke.py` |
 
+The no-camera USD is sourced from the
+[NVIDIA Anchor-Lab dataset](https://huggingface.co/datasets/nvidia/Anchor-Lab/blob/main/robot_assets/so101_no_camera_new_calib.usd).
+Its SHA-256 digest is `c6c82840925ace388b0ff0acb7d8538c2b419d92fbe01dc70fe833b974d6d462`.
+
 #### Joint names
 
-The pipeline uses **USD prim names** end-to-end (in `joint_list.txt`, the
-bounds YAML, and `best_params.yaml`). They differ from the LeRobot driver
-column names you may see in raw recordings:
+The calibrated USD uses LeRobot-style joint prim names. Existing SAGE
+recordings and the bounds YAML retain the legacy labels used by the original
+SO-101 asset; the runtime maps them without rewriting recorded data:
 
-| USD prim (sysid + bounds) | LeRobot driver name | Description |
+| Recorded data / bounds | Calibrated USD prim | Description |
 |---|---|---|
 | `Rotation` | `shoulder_pan` | Base yaw |
 | `Pitch` | `shoulder_lift` | Shoulder pitch |
@@ -231,8 +235,11 @@ column names you may see in raw recordings:
 | `Wrist_Roll` | `wrist_roll` | Wrist roll |
 | `Jaw` | `gripper` | Gripper |
 
-Your `joint_list.txt` must list the six USD prim names, one per line, in
-the column order used by `control.csv` and `state_motor.csv`.
+Legacy and calibrated names are both accepted by joint-selection CLI options.
+`best_params.yaml` uses the calibrated USD prim names so its values can be
+copied directly into actuator YAMLs. A recorded `joint_list.txt` should keep
+the legacy labels above in the column order used by `control.csv` and
+`state_motor.csv`.
 
 #### 1. Collect motor data
 

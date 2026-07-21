@@ -8,8 +8,8 @@
 # (https://www.feetechrc.com/store/p/sts3215.html). Customer's CMA-ES
 # sysid fills in armature, dynamic_friction, viscous_friction.
 #
-# Robot: 6-DOF arm + gripper; joints named per USD prim:
-#   Rotation, Pitch, Elbow, Wrist_Pitch, Wrist_Roll, Jaw
+# Robot: 6-DOF arm + gripper; calibrated USD prim names:
+#   shoulder_pan, shoulder_lift, elbow_flex, wrist_flex, wrist_roll, gripper
 
 # Effort/velocity limits - STS3215 datasheet
 effort_limit_sim: 1.5          # N-m, datasheet stall torque (12V)

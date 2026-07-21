@@ -330,7 +330,9 @@ _UR10_USD_PATH = os.path.abspath(
 )
 
 _SO101_USD_PATH = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "..", "input", "robot_models", "so101", "so101.usd")
+    os.path.join(
+        os.path.dirname(__file__), "..", "..", "input", "robot_models", "so101", "so101_no_camera_new_calib.usd"
+    )
 )
 
 
@@ -393,12 +395,12 @@ class So101SysidSceneCfg(InteractiveSceneCfg):
         init_state=ArticulationCfg.InitialStateCfg(
             pos=(0.0, 0.0, 0.0),
             joint_pos={
-                "Rotation": 0.0,
-                "Pitch": 0.0,
-                "Elbow": 0.0,
-                "Wrist_Pitch": 0.0,
-                "Wrist_Roll": 0.0,
-                "Jaw": 0.0,
+                "shoulder_pan": 0.0,
+                "shoulder_lift": 0.0,
+                "elbow_flex": 0.0,
+                "wrist_flex": 0.0,
+                "wrist_roll": 0.0,
+                "gripper": 0.0,
             },
         ),
         actuators={
@@ -446,8 +448,8 @@ UR10E_JOINT_NAMES = [
     "wrist_3_joint",
 ]
 
-# SO-101 uses USD prim names directly (no _joint suffix).
-# These match both the USD articulation and SAGE's joint_list.txt.
+# Legacy SO-101 data labels used by SAGE joint_list.txt and SysID bounds.
+# Keep accepting these names while the calibrated USD uses LeRobot prim names.
 SO101_JOINT_NAMES = [
     "Rotation",
     "Pitch",
@@ -456,6 +458,15 @@ SO101_JOINT_NAMES = [
     "Wrist_Roll",
     "Jaw",
 ]
+
+SO101_JOINT_NAME_MAP = {
+    "Rotation": "shoulder_pan",
+    "Pitch": "shoulder_lift",
+    "Elbow": "elbow_flex",
+    "Wrist_Pitch": "wrist_flex",
+    "Wrist_Roll": "wrist_roll",
+    "Jaw": "gripper",
+}
 
 _ROBOT_CONFIGS = {
     "h1": {
@@ -475,8 +486,9 @@ _ROBOT_CONFIGS = {
     },
     "so101": {
         "scene_cfg_cls": So101SysidSceneCfg,
-        "joint_names": SO101_JOINT_NAMES,
+        "joint_names": list(SO101_JOINT_NAME_MAP.values()),
         "actuator_yaml": "so101/so101_implicit.yaml",
+        "joint_name_map": SO101_JOINT_NAME_MAP,
     },
 }
 
@@ -632,10 +644,13 @@ def main():  # noqa: C901
     # Robot-specific config
     robot_cfg = _ROBOT_CONFIGS[args.robot_name]
     all_joint_names = robot_cfg["joint_names"]
+    joint_name_map = robot_cfg.get("joint_name_map", {})
+    sim_to_data_joint_names = {sim_name: data_name for data_name, sim_name in joint_name_map.items()}
 
     # Filter sysid joints if --joints specifies a subset
     if args.joints is not None:
-        sysid_joint_names = [n for n in all_joint_names if any(jt in n for jt in args.joints)]
+        requested_joint_names = [joint_name_map.get(name, name) for name in args.joints]
+        sysid_joint_names = [n for n in all_joint_names if any(jt in n for jt in requested_joint_names)]
         if not sysid_joint_names:
             raise ValueError(
                 f"--joints {args.joints} matched no sim joints from {all_joint_names}. "
@@ -691,17 +706,27 @@ def main():  # noqa: C901
         sage_joint_list_path = os.path.join(sage_dir, "joint_list.txt")
         with open(sage_joint_list_path) as f:
             available_data_joints = set(line.strip() for line in f if line.strip())
-        data_joint_names = [n for n in sysid_joint_names if n in available_data_joints]
+        data_joint_names = [
+            sim_to_data_joint_names.get(name, name)
+            for name in sysid_joint_names
+            if sim_to_data_joint_names.get(name, name) in available_data_joints
+        ]
         if not data_joint_names:
+            expected_data_joints = [sim_to_data_joint_names.get(name, name) for name in sysid_joint_names]
             raise ValueError(
-                f"No overlap between sysid joints {sysid_joint_names} and data joints {sorted(available_data_joints)}"
+                f"No overlap between expected data joints {expected_data_joints} "
+                f"and available joints {sorted(available_data_joints)}"
             )
         if len(data_joint_names) < len(sysid_joint_names):
-            mirrored_joints = [n for n in sysid_joint_names if n not in available_data_joints]
+            missing_joints = [
+                name
+                for name in sysid_joint_names
+                if sim_to_data_joint_names.get(name, name) not in available_data_joints
+            ]
             log_message(
                 f"Data has {len(data_joint_names)} of {len(sysid_joint_names)} sysid joints: {data_joint_names}"
             )
-            log_message(f"Mirroring params to {len(mirrored_joints)} joints: {mirrored_joints}")
+            log_message(f"Mirroring params to {len(missing_joints)} joints: {missing_joints}")
 
         commanded_nj, measured_nj = load_real_data(sage_dir, control_dt, data_joint_names)
         measured_velocity_nj = np.zeros_like(measured_nj)
@@ -774,10 +799,11 @@ def main():  # noqa: C901
     joint_name_to_idx = {name: i for i, name in enumerate(robot.joint_names)}
 
     if single_joint_mode:
-        if args.joint_name not in joint_name_to_idx:
-            raise ValueError(f"Joint '{args.joint_name}' not found. Available: {robot.joint_names}")
-        target_joint_idx = joint_name_to_idx[args.joint_name]
-        log_message(f"Target joint: {args.joint_name} (sim index {target_joint_idx})")
+        target_joint_name = joint_name_map.get(args.joint_name, args.joint_name)
+        if target_joint_name not in joint_name_to_idx:
+            raise ValueError(f"Joint '{target_joint_name}' not found. Available: {robot.joint_names}")
+        target_joint_idx = joint_name_to_idx[target_joint_name]
+        log_message(f"Target joint: {args.joint_name} -> {target_joint_name} (sim index {target_joint_idx})")
         commanded_t = torch.tensor(commanded_1d, dtype=torch.float32, device=device)
         measured_t = torch.tensor(measured_1d, dtype=torch.float32, device=device)
         measured_velocity_t = torch.tensor(measured_velocity_1d, dtype=torch.float32, device=device)
@@ -789,7 +815,7 @@ def main():  # noqa: C901
         start_pos_nj = commanded_t[0]  # (num_data_joints,)
 
         # Build data_joint_ids for scoring (sim indices of joints with real data)
-        data_joint_ids = [joint_name_to_idx[n] for n in data_joint_names]
+        data_joint_ids = [joint_name_to_idx[joint_name_map.get(name, name)] for name in data_joint_names]
         data_joint_ids_tensor = torch.tensor(data_joint_ids, dtype=torch.long, device=device)
 
         # Build mirror mapping: command mirrored joints with same data as their counterpart
@@ -896,7 +922,8 @@ def main():  # noqa: C901
                 arm_joint_ids.append(joint_name_to_idx[sim_name])
     else:
         for jt in optimizer.joint_types:
-            matched = [n for n in sysid_joint_names if jt in n]
+            sim_joint_type = joint_name_map.get(jt, jt)
+            matched = [n for n in sysid_joint_names if sim_joint_type in n]
             if not matched:
                 raise ValueError(f"Joint type '{jt}' matches no sim joint in {sysid_joint_names}")
             arm_joint_ids.append(joint_name_to_idx[matched[0]])
@@ -911,6 +938,10 @@ def main():  # noqa: C901
     # Non-mirrored (H1 right arm): "right_shoulder_pitch" stays as-is (already exact)
     _joint_name_map = {}
     for jt in optimizer.joint_types:
+        mapped_sim_name = joint_name_map.get(jt, jt)
+        if mapped_sim_name != jt:
+            _joint_name_map[jt] = mapped_sim_name
+            continue
         if jt in sysid_joint_names:
             # Exact match — no mapping needed
             continue

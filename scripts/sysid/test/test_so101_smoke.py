@@ -11,6 +11,7 @@ only - they do NOT require a SimulationApp, GPU, or `isaaclab` imports.
 
 from __future__ import annotations
 
+import ast
 import os
 import sys
 
@@ -20,9 +21,10 @@ _REPO = os.path.dirname(os.path.dirname(os.path.dirname(_HERE)))
 sys.path.insert(0, os.path.join(_REPO, "input"))
 
 
-# Hardcoded here (NOT imported from run_sysid.py) - run_sysid.py is not
-# import-safe without a SimulationApp running.
-SO101_JOINT_NAMES = [
+_SYSID_PATH = os.path.join(_REPO, "scripts", "sysid", "run_sysid.py")
+
+# Legacy data labels retained in joint_list.txt and the SysID bounds.
+SO101_DATA_JOINT_NAMES = [
     "Rotation",
     "Pitch",
     "Elbow",
@@ -30,6 +32,15 @@ SO101_JOINT_NAMES = [
     "Wrist_Roll",
     "Jaw",
 ]
+
+SO101_JOINT_NAME_MAP = {
+    "Rotation": "shoulder_pan",
+    "Pitch": "shoulder_lift",
+    "Elbow": "elbow_flex",
+    "Wrist_Pitch": "wrist_flex",
+    "Wrist_Roll": "wrist_roll",
+    "Jaw": "gripper",
+}
 
 
 def test_so101_run_config_loads() -> None:
@@ -49,9 +60,7 @@ def test_so101_actuator_template_loads() -> None:
     from actuator_models import load_actuator_params
 
     params = load_actuator_params("so101/so101_implicit.yaml")
-    assert "stiffness" in params and "damping" in params, (
-        "so101_implicit.yaml missing stiffness/damping"
-    )
+    assert "stiffness" in params and "damping" in params, "so101_implicit.yaml missing stiffness/damping"
     # Template must ship with zero friction/armature so customer's CMA-ES
     # fit is not biased by stale fitted values.
     for key in ("armature", "dynamic_friction", "viscous_friction"):
@@ -63,25 +72,20 @@ def test_so101_actuator_template_loads() -> None:
                     "template must be clean (zero friction/armature)"
                 )
         else:
-            assert block == 0.0, (
-                f"so101_implicit.yaml shipping with non-zero {key}={block} - "
-                "template must be clean"
-            )
+            assert block == 0.0, f"so101_implicit.yaml shipping with non-zero {key}={block} - template must be clean"
 
 
 def test_so101_sysid_bounds_loads() -> None:
     """`so101_sysid_bounds.yaml` parses with toolbox-conventional schema."""
     import yaml
 
-    bounds_path = os.path.join(
-        _REPO, "input", "run_configs", "so101", "so101_sysid_bounds.yaml"
-    )
+    bounds_path = os.path.join(_REPO, "input", "run_configs", "so101", "so101_sysid_bounds.yaml")
     with open(bounds_path) as f:
         bounds = yaml.safe_load(f)
 
     assert "joint_types" in bounds, "missing joint_types"
-    assert sorted(bounds["joint_types"]) == sorted(SO101_JOINT_NAMES), (
-        f"joint_types {bounds['joint_types']} does not match SO101_JOINT_NAMES"
+    assert sorted(bounds["joint_types"]) == sorted(SO101_DATA_JOINT_NAMES), (
+        f"joint_types {bounds['joint_types']} does not match SO101_DATA_JOINT_NAMES"
     )
     assert "parameters" in bounds and "cmaes" in bounds
     for param in ("armature", "dynamic_friction", "viscous_friction"):
@@ -94,20 +98,30 @@ def test_so101_joint_configs_present() -> None:
     """sim2real_gap joint list configs exist with the expected joints."""
     import yaml
 
-    yaml_path = os.path.join(
-        _REPO, "scripts", "sim2real_gap", "configs", "so101_joints.yaml"
-    )
-    txt_path = os.path.join(
-        _REPO, "scripts", "sim2real_gap", "configs", "so101_valid_joints.txt"
-    )
+    yaml_path = os.path.join(_REPO, "scripts", "sim2real_gap", "configs", "so101_joints.yaml")
+    txt_path = os.path.join(_REPO, "scripts", "sim2real_gap", "configs", "so101_valid_joints.txt")
 
     with open(yaml_path) as f:
         joints_yaml = yaml.safe_load(f)
-    assert sorted(joints_yaml["joints"]) == sorted(SO101_JOINT_NAMES)
+    assert sorted(joints_yaml["joints"]) == sorted(SO101_DATA_JOINT_NAMES)
 
     with open(txt_path) as f:
         joints_txt = [line.strip() for line in f if line.strip()]
-    assert sorted(joints_txt) == sorted(SO101_JOINT_NAMES)
+    assert sorted(joints_txt) == sorted(SO101_DATA_JOINT_NAMES)
+
+
+def test_so101_sysid_maps_legacy_data_names_to_usd_prims() -> None:
+    """The SysID runtime preserves old data labels while targeting new USD prims."""
+    with open(_SYSID_PATH) as file:
+        tree = ast.parse(file.read())
+
+    for node in tree.body:
+        if not isinstance(node, ast.Assign):
+            continue
+        if any(isinstance(target, ast.Name) and target.id == "SO101_JOINT_NAME_MAP" for target in node.targets):
+            assert ast.literal_eval(node.value) == SO101_JOINT_NAME_MAP
+            return
+    raise AssertionError("Could not find SO101_JOINT_NAME_MAP in run_sysid.py")
 
 
 def test_h1_run_config_still_loads() -> None:

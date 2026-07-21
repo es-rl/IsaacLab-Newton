@@ -13,6 +13,7 @@ require a SimulationApp or GPU.
 
 from __future__ import annotations
 
+import ast
 import os
 import re
 
@@ -24,7 +25,7 @@ _REPO = os.path.dirname(os.path.dirname(os.path.dirname(_HERE)))
 
 # Hardcoded here (NOT imported from newton_benchmark.py) - that module is
 # not import-safe without a SimulationApp running.
-SO101_JOINT_NAMES = [
+SO101_DATA_JOINT_NAMES = [
     "Rotation",
     "Pitch",
     "Elbow",
@@ -32,6 +33,15 @@ SO101_JOINT_NAMES = [
     "Wrist_Roll",
     "Jaw",
 ]
+
+SO101_JOINT_NAME_MAP = {
+    "Rotation": "shoulder_pan",
+    "Pitch": "shoulder_lift",
+    "Elbow": "elbow_flex",
+    "Wrist_Pitch": "wrist_flex",
+    "Wrist_Roll": "wrist_roll",
+    "Jaw": "gripper",
+}
 
 
 _BENCH_PATH = os.path.join(_REPO, "scripts", "sim2real_gap", "newton_benchmark.py")
@@ -41,8 +51,7 @@ _BENCH_PATH = os.path.join(_REPO, "scripts", "sim2real_gap", "newton_benchmark.p
 _DISPATCH_ENTRY_RE = re.compile(
     r'"so101":\s*\{\s*'
     r'"scene_cfg_cls":\s*So101BenchmarkSceneCfg,\s*'
-    r'"actuator_yaml":\s*"(?P<yaml>[^"]+)",\s*'
-    r"\}",
+    r'"actuator_yaml":\s*"(?P<yaml>[^"]+)"',
     re.DOTALL,
 )
 
@@ -53,6 +62,17 @@ _SCENE_ACTUATOR_RE = re.compile(
     r'load_implicit_actuator_cfg\(\s*"(?P<yaml>[^"]+)"',
     re.DOTALL,
 )
+
+
+def _load_literal_assignment(name: str):
+    with open(_BENCH_PATH) as file:
+        tree = ast.parse(file.read())
+    for node in tree.body:
+        if not isinstance(node, ast.Assign):
+            continue
+        if any(isinstance(target, ast.Name) and target.id == name for target in node.targets):
+            return ast.literal_eval(node.value)
+    raise AssertionError(f"Could not find literal assignment for {name}")
 
 
 def test_so101_registered_in_benchmark_dispatch() -> None:
@@ -89,13 +109,22 @@ def test_so101_dispatch_actuator_yaml_matches_scene_cfg() -> None:
 
 def test_so101_benchmark_usd_exists() -> None:
     """The SO-101 USD asset referenced by the benchmark scene cfg is present."""
-    usd_path = os.path.join(_REPO, "input", "robot_models", "so101", "so101.usd")
+    usd_path = os.path.join(_REPO, "input", "robot_models", "so101", "so101_no_camera_new_calib.usd")
     assert os.path.isfile(usd_path), f"missing SO-101 USD: {usd_path}"
+
+    with open(_BENCH_PATH) as file:
+        source = file.read()
+    assert "so101_no_camera_new_calib.usd" in source
+
+
+def test_so101_benchmark_maps_legacy_data_names_to_usd_prims() -> None:
+    """Legacy recording labels map to the calibrated USD joint prims."""
+    assert _load_literal_assignment("_SO101_JOINT_NAME_MAP") == SO101_JOINT_NAME_MAP
 
 
 def test_so101_sage_configs_exist() -> None:
     """``configs/so101_joints.yaml`` and ``so101_valid_joints.txt`` exist
-    and list the six USD joint names in order."""
+    and list the six legacy recording labels in order."""
     yaml_path = os.path.join(_REPO, "scripts", "sim2real_gap", "configs", "so101_joints.yaml")
     txt_path = os.path.join(_REPO, "scripts", "sim2real_gap", "configs", "so101_valid_joints.txt")
     assert os.path.isfile(yaml_path), f"missing {yaml_path}"
@@ -103,12 +132,12 @@ def test_so101_sage_configs_exist() -> None:
 
     with open(yaml_path) as f:
         joints_yaml = yaml.safe_load(f)
-    assert joints_yaml.get("joints") == SO101_JOINT_NAMES, (
-        f"so101_joints.yaml joints {joints_yaml.get('joints')} does not match expected order {SO101_JOINT_NAMES}"
+    assert joints_yaml.get("joints") == SO101_DATA_JOINT_NAMES, (
+        f"so101_joints.yaml joints {joints_yaml.get('joints')} does not match expected order {SO101_DATA_JOINT_NAMES}"
     )
 
     with open(txt_path) as f:
         joints_txt = [line.strip() for line in f if line.strip()]
-    assert joints_txt == SO101_JOINT_NAMES, (
-        f"so101_valid_joints.txt {joints_txt} does not match expected order {SO101_JOINT_NAMES}"
+    assert joints_txt == SO101_DATA_JOINT_NAMES, (
+        f"so101_valid_joints.txt {joints_txt} does not match expected order {SO101_DATA_JOINT_NAMES}"
     )

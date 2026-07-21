@@ -83,6 +83,9 @@ _build
 # SysID input data (large binary files, bind-mounted in Docker)
 input/sysid_data/
 input/actuator_models/**/*.pt
-input/robot_models/
+input/robot_models/*
+!input/robot_models/so101/
+input/robot_models/so101/*
+!input/robot_models/so101/so101_no_camera_new_calib.usd
 input/motion_files/
 input/*.zip
