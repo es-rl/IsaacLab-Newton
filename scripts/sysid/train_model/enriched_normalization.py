@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 import numpy as np
 
@@ -25,9 +26,11 @@ def apply_stats(data: np.ndarray, stats: dict[str, np.ndarray]) -> np.ndarray:
     return (data - stats["mean"]) / stats["std"]
 
 
-def save_stats(stats: dict[str, np.ndarray], path: str) -> None:
-    """Write stats to JSON (mean and std as lists)."""
+def save_stats(stats: dict[str, np.ndarray], path: str, metadata: dict[str, Any] | None = None) -> None:
+    """Write stats and optional artifact-contract metadata to JSON."""
     payload = {"mean": stats["mean"].tolist(), "std": stats["std"].tolist()}
+    if metadata is not None:
+        payload["metadata"] = metadata
     with open(path, "w") as f:
         json.dump(payload, f, indent=2)
 

@@ -35,6 +35,15 @@ from spawn_utils import spawn_from_usd_with_fixed_base
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from actuator_compat import get_joint_indices  # noqa: E402
 
+_TRAIN_MODEL_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "sysid", "train_model"))
+sys.path.insert(0, _TRAIN_MODEL_DIR)
+from enriched_contract import (  # noqa: E402
+    H1_JOINT_NAMES,
+    EnrichedResidualRuntime,
+    infer_enriched_gru_contract,
+    validate_normalization_stats,
+)
+
 from isaaclab.actuators import ActuatorNetLSTMCfg, ImplicitActuatorCfg
 from isaaclab.assets import ArticulationCfg, AssetBaseCfg
 from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
@@ -685,8 +694,15 @@ def _patch_g1_fulltorque_enriched(actuator, robot, model_path: str, stats_path: 
     model = torch.jit.load(model_path, map_location=device).eval()
     with open(stats_path) as f:
         stats = json.load(f)
-    mean_t = torch.tensor(stats["mean"], dtype=torch.float32, device=device)
-    std_t = torch.tensor(stats["std"], dtype=torch.float32, device=device)
+    contract = infer_enriched_gru_contract(model)
+    if contract.input_size != 24 or contract.output_size != num_joints:
+        raise ValueError(
+            "G1 enriched checkpoint must have 24 inputs and four outputs; "
+            f"got input={contract.input_size}, output={contract.output_size}"
+        )
+    mean_t, std_t = validate_normalization_stats(stats, contract.input_size)
+    mean_t = mean_t.to(device)
+    std_t = std_t.to(device)
 
     joint_indices = [robot.joint_names.index(jn) for jn in _G1_ARM_JOINT_NAMES]
     actuator_joint_names = list(actuator._joint_names)
@@ -694,14 +710,22 @@ def _patch_g1_fulltorque_enriched(actuator, robot, model_path: str, stats_path: 
     actuator_global_indices = [robot.joint_names.index(jn) for jn in actuator_joint_names]
     actuator_global_indices_t = torch.tensor(actuator_global_indices, dtype=torch.long, device=device)
 
-    hidden = torch.zeros(2, num_envs, 128, dtype=torch.float32, device=device)
+    hidden = torch.zeros(
+        contract.num_layers,
+        num_envs,
+        contract.hidden_size,
+        dtype=torch.float32,
+        device=device,
+    )
     prev_torque = torch.zeros(num_envs, num_joints, dtype=torch.float32, device=device)
     mj_model = _load_g1_sysid_mujoco_model()
     mj_data = _mj.MjData(mj_model)
 
     log_message(
         "G1 production full-torque GRU: "
-        f"joints={_G1_ARM_JOINT_NAMES}, input=24, output=4, mode=GRU replaces PD"
+        f"joints={_G1_ARM_JOINT_NAMES}, input={contract.input_size}, "
+        f"hidden={contract.hidden_size}x{contract.num_layers}, output={contract.output_size}, "
+        "mode=GRU replaces PD"
     )
 
     def reset_state():
@@ -846,6 +870,8 @@ def _patch_g1_fulltorque_enriched(actuator, robot, model_path: str, stats_path: 
                     for act_loc_idx, robot_idx in zip(actuator_local_indices, joint_indices):
                         applied_eff_t[:, robot_idx] = src_applied[:, act_loc_idx]
 
+        return None
+
     actuator.compute = types.MethodType(patched_compute_compat, actuator)
     actuator._enriched_model = model
     actuator._enriched_hidden = hidden
@@ -855,6 +881,160 @@ def _patch_g1_fulltorque_enriched(actuator, robot, model_path: str, stats_path: 
 
 
 # ---------------------------------------------------------------------------
+
+_H1_ENRICHED_JOINT_NAMES = list(H1_JOINT_NAMES)
+
+
+def _patch_h1_enriched_residual(
+    actuator,
+    robot,
+    model_path: str,
+    stats_path: str,
+    residual_scale: float,
+):
+    """Patch H1 implicit PD with a coupled four-joint enriched GRU residual."""
+    import types
+
+    device = actuator._device
+    num_envs = int(actuator._num_envs)
+    model = torch.jit.load(model_path, map_location=device).eval()
+    with open(stats_path) as f:
+        stats = json.load(f)
+    runtime = EnrichedResidualRuntime(
+        model=model,
+        stats=stats,
+        residual_scale=residual_scale,
+        num_envs=num_envs,
+        device=device,
+    )
+
+    actuator_joint_names = list(actuator._joint_names)
+    actuator_local_indices = [actuator_joint_names.index(name) for name in _H1_ENRICHED_JOINT_NAMES]
+    actuator_local_indices_t = torch.tensor(actuator_local_indices, dtype=torch.long, device=device)
+    actuator_global_indices = [robot.joint_names.index(name) for name in actuator_joint_names]
+    actuator_global_indices_t = torch.tensor(actuator_global_indices, dtype=torch.long, device=device)
+
+    log_message(
+        "H1 enriched residual GRU: "
+        f"joints={_H1_ENRICHED_JOINT_NAMES}, input={runtime.contract.input_size}, "
+        f"hidden={runtime.contract.hidden_size}x{runtime.contract.num_layers}, "
+        f"output={runtime.contract.output_size}, residual_scale={residual_scale}"
+    )
+
+    def _as_tensor(value):
+        return value if isinstance(value, torch.Tensor) else wp.to_torch(value)
+
+    def _select_right(value):
+        tensor = _as_tensor(value).to(dtype=torch.float32, device=device)
+        return tensor.index_select(-1, actuator_local_indices_t)
+
+    def _identity_clip(effort):
+        return effort
+
+    def patched_compute_local(self, control_action, joint_pos, joint_vel):
+        if control_action.joint_positions is None:
+            raise ValueError("enriched_residual requires joint position targets so implicit PD remains active")
+
+        q = joint_pos.index_select(1, actuator_local_indices_t).to(torch.float32)
+        v = joint_vel.index_select(1, actuator_local_indices_t).to(torch.float32)
+        q_target = control_action.joint_positions.index_select(1, actuator_local_indices_t).to(torch.float32)
+        if control_action.joint_velocities is None:
+            velocity_target = torch.zeros_like(joint_vel)
+        else:
+            velocity_target = control_action.joint_velocities.to(torch.float32)
+        right_velocity_target = velocity_target.index_select(1, actuator_local_indices_t)
+        if not torch.allclose(right_velocity_target, torch.zeros_like(right_velocity_target), rtol=0.0, atol=1e-6):
+            raise ValueError("enriched_residual requires zero right-arm velocity targets")
+        stiffness = _select_right(self.stiffness)
+        damping = _select_right(self.damping)
+
+        if control_action.joint_efforts is None:
+            new_efforts = torch.zeros(
+                num_envs,
+                actuator.num_joints,
+                dtype=torch.float32,
+                device=device,
+            )
+        else:
+            new_efforts = control_action.joint_efforts.clone().to(torch.float32)
+        existing_right = new_efforts.index_select(1, actuator_local_indices_t)
+        feedforward_right, _, _ = runtime.step(
+            position=q,
+            position_target=q_target,
+            velocity=v,
+            stiffness=stiffness,
+            damping=damping,
+            existing_effort=existing_right,
+            clip_effort=_identity_clip,
+        )
+        new_efforts[:, actuator_local_indices_t] = feedforward_right
+        control_action.joint_efforts = new_efforts
+
+        pd_estimate = self.stiffness * (control_action.joint_positions - joint_pos) + self.damping * (
+            velocity_target - joint_vel
+        )
+        self.computed_effort = pd_estimate + new_efforts
+        self.applied_effort = self._clip_effort(self.computed_effort)
+        runtime.previous_torque.copy_(
+            self.applied_effort.index_select(1, actuator_local_indices_t).detach().to(torch.float32)
+        )
+        return control_action
+
+    def patched_compute_compat(self, control_action=None, joint_pos=None, joint_vel=None):
+        if control_action is not None and joint_pos is not None and joint_vel is not None:
+            return patched_compute_local(self, control_action, joint_pos, joint_vel)
+
+        full_pos = _as_tensor(robot.data.joint_pos)
+        full_vel = _as_tensor(robot.data.joint_vel)
+        pos_target = _as_tensor(self.data._actuator_position_target)
+        local_pos = full_pos.index_select(1, actuator_global_indices_t)
+        local_vel = full_vel.index_select(1, actuator_global_indices_t)
+        local_target = pos_target.index_select(1, actuator_global_indices_t)
+
+        stiffness = _as_tensor(self.data._sim_bind_joint_stiffness_sim)
+        damping = _as_tensor(self.data._sim_bind_joint_damping_sim)
+        self.stiffness = stiffness.index_select(1, actuator_global_indices_t)
+        self.damping = damping.index_select(1, actuator_global_indices_t)
+
+        if not getattr(self, "_clip_effort_shimmed", False):
+            effort_limit = _as_tensor(self.effort_limit)
+
+            def _clip_effort(effort):
+                return torch.clamp(effort, min=-effort_limit, max=effort_limit)
+
+            self._clip_effort = _clip_effort
+            self._clip_effort_shimmed = True
+
+        class _ControlAction:
+            pass
+
+        local_action = _ControlAction()
+        local_action.joint_positions = local_target
+        local_action.joint_efforts = None
+        local_action.joint_velocities = None
+        patched_compute_local(self, local_action, local_pos, local_vel)
+
+        effort_target = _as_tensor(self.data._actuator_effort_target)
+        joint_effort = _as_tensor(self.data.joint_effort)
+        applied_effort = getattr(self.data, "_applied_effort", None)
+        applied_effort_t = _as_tensor(applied_effort) if applied_effort is not None else None
+        source_effort = local_action.joint_efforts.to(effort_target.dtype)
+        source_applied = self.applied_effort
+        for actuator_index, robot_index in enumerate(actuator_global_indices):
+            effort_target[:, robot_index] = source_effort[:, actuator_index]
+            joint_effort[:, robot_index] = source_applied[:, actuator_index].to(joint_effort.dtype)
+            if applied_effort_t is not None:
+                applied_effort_t[:, robot_index] = source_applied[:, actuator_index].to(applied_effort_t.dtype)
+
+        return None
+
+    actuator.compute = types.MethodType(patched_compute_compat, actuator)
+    actuator._enriched_model = model
+    actuator._enriched_runtime = runtime
+    actuator._enriched_hidden = runtime.hidden
+    actuator._enriched_reset_state = runtime.reset
+
+
 # Arm actuator group helpers
 # ---------------------------------------------------------------------------
 _ARM_JOINT_EXPRS = [".*_shoulder_pitch", ".*_shoulder_roll", ".*_shoulder_yaw", ".*_elbow"]
@@ -932,7 +1112,6 @@ def _build_arm_actuators(run_cfg: dict, robot_name: str) -> dict:
 
     joint_exprs = arm["joint_exprs"]
     group_name = arm["group_name"]
-    model_dir = os.path.join(_ACTUATOR_MODELS_BASE, arm["model_subdir"])
 
     if model_type == "implicit":
         if not yaml_file:
@@ -1010,6 +1189,22 @@ def _build_arm_actuators(run_cfg: dict, robot_name: str) -> dict:
                 log_message(f"  {jt}: ImplicitActuator (PD-only, no GRU model)")
         return actuators
 
+    elif model_type == "enriched_residual":
+        if robot_name != "h1":
+            raise ValueError("model_type=enriched_residual currently supports robot_name=h1 only")
+        if not yaml_file:
+            raise ValueError("actuator.yaml_file required for model_type=enriched_residual")
+        if not act_cfg.get("network_file") or not act_cfg.get("stats_file"):
+            raise ValueError("enriched_residual requires actuator.network_file and actuator.stats_file")
+        residual_scale = act_cfg.get("residual_scale")
+        if residual_scale is None or not np.isfinite(float(residual_scale)) or float(residual_scale) <= 0:
+            raise ValueError("enriched_residual requires a finite, positive actuator.residual_scale")
+        log_message(
+            f"  {group_name}: ImplicitActuator + enriched residual "
+            f"({act_cfg['network_file']}, scale={float(residual_scale)})"
+        )
+        return {group_name: load_implicit_actuator_cfg(yaml_file, joint_exprs)}
+
     elif model_type == "full_torque_enriched":
         if not yaml_file:
             raise ValueError("actuator.yaml_file required for model_type=full_torque_enriched")
@@ -1022,7 +1217,8 @@ def _build_arm_actuators(run_cfg: dict, robot_name: str) -> dict:
     else:
         raise ValueError(
             f"Unknown actuator model_type '{model_type}'. "
-            "Choose from: implicit, dcmotor, lstm, lstm_perjoint, fmu, hybrid_residual, full_torque_enriched"
+            "Choose from: implicit, dcmotor, lstm, lstm_perjoint, fmu, hybrid_residual, "
+            "enriched_residual, full_torque_enriched"
         )
 
 
@@ -1391,7 +1587,7 @@ class NewtonJointMotionBenchmark:
         # Load per-robot run config for solver/buffer settings
         from run_configs import load_run_cfg
 
-        self._run_cfg = load_run_cfg(self.robot_name)
+        self._run_cfg = load_run_cfg(self.robot_name, getattr(args, "run_config", None))
 
         # Resolve actuator YAML: run config > _BENCHMARK_ROBOT_CONFIGS fallback
         act_section = self._run_cfg.get("actuator", {})
@@ -1444,7 +1640,7 @@ class NewtonJointMotionBenchmark:
             self.valid_joint_names = [line.strip() for line in file if line.strip()]
         log_message(f"Loaded {len(self.valid_joint_names)} valid joint names from {config_file}")
 
-    def _setup_simulation(self):
+    def _setup_simulation(self):  # noqa: C901
         """Initialize SimulationContext + InteractiveScene with Newton solver."""
         # Configure simulation with Newton solver
         sim_cfg = SimulationCfg(
@@ -1558,6 +1754,28 @@ class NewtonJointMotionBenchmark:
                             cross_joint_map=arm_cfg.get("cross_joint_map"),
                         )
 
+        if act_cfg.get("model_type") == "enriched_residual":
+            network_file = act_cfg.get("network_file")
+            stats_file = act_cfg.get("stats_file")
+            residual_scale = float(act_cfg["residual_scale"])
+            model_path = os.path.join(_ACTUATOR_MODELS_BASE, network_file)
+            stats_path = os.path.join(_ACTUATOR_MODELS_BASE, stats_file)
+            group_name = _ROBOT_ARM_CFG[self.robot_name]["group_name"]
+            actuator = self.robot.actuators.get(group_name)
+            if actuator is None or type(actuator).__name__ != "ImplicitActuator":
+                raise ValueError(f"enriched_residual requires ImplicitActuator group {group_name!r}")
+            log_message(
+                f"Patching '{group_name}' with H1 enriched residual GRU: "
+                f"{os.path.basename(model_path)} (scale={residual_scale})"
+            )
+            _patch_h1_enriched_residual(
+                actuator=actuator,
+                robot=self.robot,
+                model_path=model_path,
+                stats_path=stats_path,
+                residual_scale=residual_scale,
+            )
+
         if act_cfg.get("model_type") == "full_torque_enriched":
             network_file = act_cfg.get("network_file")
             stats_file = act_cfg.get("stats_file")
@@ -1601,10 +1819,7 @@ class NewtonJointMotionBenchmark:
                 new_mass = max(old_mass + float(override["delta_mass"]), 0.05)
                 all_masses[:, bidx] = new_mass
                 applied += 1
-                log_message(
-                    f"Mass override: {body_name} (body {bidx}) "
-                    f"{old_mass:.3f} -> {new_mass:.3f} kg"
-                )
+                log_message(f"Mass override: {body_name} (body {bidx}) {old_mass:.3f} -> {new_mass:.3f} kg")
             if applied:
                 if hasattr(self.robot, "set_masses_index"):
                     self.robot.set_masses_index(masses=all_masses)
@@ -1660,7 +1875,7 @@ class NewtonJointMotionBenchmark:
         # Track simulation time manually
         self._sim_time = 0.0
 
-    def _apply_newton_friction_params(self):
+    def _apply_newton_friction_params(self):  # noqa: C901
         """Write dynamic_friction and viscous_friction to Newton solver.
 
         Isaac Lab's actuator setup writes ``friction`` (static/Coulomb) to
@@ -1717,7 +1932,6 @@ class NewtonJointMotionBenchmark:
             log_message("WARNING: Could not find Newton model — skipping friction params")
             return
 
-        device = self.robot.device
         num_dofs = len(self.robot.joint_names)
 
         def _resolve_param(param_value, joint_names):
@@ -2043,7 +2257,11 @@ class NewtonJointMotionBenchmark:
 
                 joint_pos = self._to_torch(self.robot.data.joint_pos)
                 target = joint_pos.clone()
-                target[0, self.joint_indices] = torch.tensor(interp_pos, dtype=torch.float32, device=self.robot.device)
+                target[0, self.joint_indices] = torch.tensor(
+                    interp_pos,
+                    dtype=torch.float32,
+                    device=self.robot.device,
+                )
                 self.robot.set_joint_position_target(target)
 
             self._sim_step()
@@ -2071,8 +2289,6 @@ class NewtonJointMotionBenchmark:
                     f"but benchmark tracks {self.joint_indices.numel()}; skipping teleport"
                 )
 
-        joint_pos = self._to_torch(self.robot.data.joint_pos)
-        current_pos = joint_pos[0, self.joint_indices].cpu().numpy()
         tqdm.write(f"[Benchmark] Buffer done. Starting motion ({num_steps} control steps)...")
 
         # --- Command delay buffer ---
@@ -2146,7 +2362,6 @@ class NewtonJointMotionBenchmark:
         # Flush buffered CSV rows to disk
         self._flush_logs()
 
-        final_pos = self._to_torch(self.robot.data.joint_pos)[0, self.joint_indices].cpu().numpy()
         tqdm.write(f"[Benchmark] {self.motion_name} done — {counter + 1} steps, saved to {self.sim_output_folder}")
 
     def run_benchmark_batch(self, motions):

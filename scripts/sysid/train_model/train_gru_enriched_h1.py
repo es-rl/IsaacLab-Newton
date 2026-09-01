@@ -3,32 +3,23 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""H1 right-arm Tier-1 enriched GRU trainer — pixel-mirror of G1 recipe.
+"""Train the deployable H1 right-arm enriched residual GRU.
 
-Port of the G1 enriched full-torque recipe (the v1 recipe that earned
-−14.4% τ for the G1 right arm). Differences from the G1 reference are
-limited to:
+The default feature contract is a 20-input coupled four-joint layout:
+[position, position_error, velocity, PD_hint, previous_torque]. It deliberately
+omits qfrc_bias because the original H1 training MJCF is not available at
+deployment. The default target is measured torque minus the factory PD estimate
+with kp=60 and kd=1.5.
 
-- SAGE-format loader (``enriched_data_h1.load_split_motions``) instead of
-  G1's ``enriched_data_g1.load_experiment``. SAGE columns are alphabetical
-  so we run :func:`_to_canonical` to put them in
-  [pitch, roll, yaw, elbow] order — the same order the deploy hook
-  (``_patch_implicit_with_fulltorque_enriched_h1_arm``) reads at runtime.
-- ``KP_FACTORY=60``, ``KD_FACTORY=1.5`` for the ``sysid_pd_hint`` feature
-  (H1 factory PD gains; G1 used its 40/1 SysID gains).
-- Default split / qfrc-bias / save dirs are placeholder paths; override via CLI.
-
-Identical to the G1 reference: optimizer (Adam, lr=1e-3, wd=1e-5), epochs
-(15), batch (64), window (200, non-overlapping stride), dropout (0.1),
-hidden (128), layers (2), force_bound (25 Nm), target clamping to
-``±force_bound``, save-on-improvement, and TorchScript export of the
-best-val checkpoint to ``<out>_script.pt`` for ``newton_benchmark.py``.
+The legacy 24-input layout remains available for historical reproduction only
+and requires --feature-layout legacy24 with matching qfrc_bias caches or the
+original --model-xml.
 
 Usage::
 
-    ./isaaclab.sh -p scripts/sysid/train_model/train_gru_enriched_h1.py \\
-        --epochs 15 \\
-        --out ~/data/h1/models/h1_arm_tier1_enriched_v4.pt
+    ./isaaclab.sh -p scripts/sysid/train_model/train_gru_enriched_h1.py \
+        --epochs 15 \
+        --out ~/data/h1/models/h1_arm_enriched_residual_deployable20.pt
 """
 
 from __future__ import annotations
@@ -44,12 +35,18 @@ import torch.nn as nn
 
 # Co-located flat modules (the shared enriched_* files in this directory).
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from enriched_contract import (  # noqa: E402
+    H1_DEPLOYABLE_FEATURE_LAYOUT,
+    H1_DEPLOYABLE_INPUT_SIZE,
+    H1_LEGACY_FEATURE_LAYOUT,
+    H1_LEGACY_INPUT_SIZE,
+    make_h1_deployable_metadata,
+)
 from enriched_data_h1 import CANONICAL_JOINT_ORDER, N_JOINTS, load_split_motions  # noqa: E402
 from enriched_model import ForceResidualGRU  # noqa: E402
 from enriched_normalization import fit_stats, save_stats  # noqa: E402
 from precompute_qfrc_bias import make_bias_provider  # noqa: E402
 
-INPUT_SIZE = 24  # 6 × 4: q, pe, v, sysid_pd_hint, qfrc_bias, prev_torque
 HIDDEN_SIZE = 128
 NUM_LAYERS = 2
 FORCE_BOUND = 25.0
@@ -88,29 +85,23 @@ def _to_canonical(motion: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
 def build_windowed(
     named_motions: list[tuple[str, dict[str, np.ndarray]]],
     window_len: int,
-    bias_fn,
+    bias_fn=None,
     residual_target: bool = False,
     kp_factory: float = KP_FACTORY,
     kd_factory: float = KD_FACTORY,
     tau_clip: float | None = None,
     tau_sim_root: str | None = None,
+    feature_layout: str = H1_DEPLOYABLE_FEATURE_LAYOUT,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Slice each motion into non-overlapping ``window_len`` chunks and stack.
+    """Slice motions into non-overlapping windows using a versioned feature layout.
 
-    Mirrors ``warm_start_fulltorque_enriched.build_windowed`` exactly: feature
-    layout ``[q, pe, v, sysid_pd_hint, qfrc_bias, prev_torque]``, target is
-    ``tau`` by default (matching G1 winner / kp=0 deploy). When
-    ``residual_target=True`` the target is ``tau - sysid_pd_hint`` so the GRU
-    learns the delta over the factory PD term — pair this with deployment in
-    ``pd_plus_gru: true`` mode at kp=60/kd=1.5 so the runtime sum reconstructs
-    the full real torque.
+    The deployable layout is [q, pe, v, sysid_pd_hint, prev_torque]. The legacy
+    layout additionally inserts qfrc_bias before prev_torque and requires a
+    bias provider. When residual_target=True the target is tau - sysid_pd_hint.
 
-    When ``tau_sim_root`` is set (Track 1 — SysID-aware residual), the target
-    becomes ``tau_real - tau_sim`` where ``tau_sim`` is precomputed by running
-    the deploy-time SysID-equipped sim on each motion and saved as
-    ``<motion>_tau_sim.npy`` in canonical [pitch, roll, yaw, elbow] order.
-    This eliminates the training-vs-deploy basis mismatch: the GRU learns
-    exactly what the SysID can't explain, not the gap-to-ideal-PD.
+    When tau_sim_root is set, the target becomes tau_real - tau_sim where
+    tau_sim is precomputed by running the deploy-time SysID-equipped simulation
+    on each motion.
     """
     xs, ys = [], []
     for exp_name, motion in named_motions:
@@ -123,14 +114,18 @@ def build_windowed(
             tau = np.clip(tau, -tau_clip, tau_clip)
         pe = qt - q
         sysid_pd = kp_factory * pe - kd_factory * v
-        qfrc_bias = bias_fn(exp_name, q, v)  # length validated inside the provider
-
-        n = q.shape[0]
-
         prev_torque = np.zeros_like(tau)
         prev_torque[1:] = tau[:-1]
 
-        feats = np.concatenate([q, pe, v, sysid_pd, qfrc_bias, prev_torque], axis=1).astype(np.float32)
+        feature_blocks = [q, pe, v, sysid_pd]
+        if feature_layout == H1_LEGACY_FEATURE_LAYOUT:
+            if bias_fn is None:
+                raise ValueError("legacy24 feature layout requires a qfrc_bias provider")
+            feature_blocks.append(bias_fn(exp_name, q, v))
+        elif feature_layout != H1_DEPLOYABLE_FEATURE_LAYOUT:
+            raise ValueError(f"Unknown H1 feature layout: {feature_layout}")
+        feature_blocks.append(prev_torque)
+        feats = np.concatenate(feature_blocks, axis=1).astype(np.float32)
 
         if tau_sim_root is not None:
             tau_sim_path = os.path.join(tau_sim_root, f"{exp_name}_tau_sim.npy")
@@ -147,7 +142,7 @@ def build_windowed(
         else:
             target = tau
 
-        for start in range(0, n - window_len + 1, window_len):
+        for start in range(0, q.shape[0] - window_len + 1, window_len):
             xs.append(feats[start : start + window_len])
             ys.append(target[start : start + window_len])
 
@@ -192,20 +187,33 @@ def main() -> None:
     parser.add_argument("--epochs", type=int, default=EPOCHS_DEFAULT)
     parser.add_argument("--lr", type=float, default=LR)
     parser.add_argument(
+        "--feature-layout",
+        choices=(H1_DEPLOYABLE_FEATURE_LAYOUT, H1_LEGACY_FEATURE_LAYOUT),
+        default=H1_DEPLOYABLE_FEATURE_LAYOUT,
+        help="deployable20 omits qfrc_bias; legacy24 requires matching bias caches or the original MJCF.",
+    )
+    parser.add_argument(
         "--out",
-        default=os.path.join(SAVE_DIR, "h1_arm_tier1_enriched_v4.pt"),
+        default=os.path.join(SAVE_DIR, "h1_arm_enriched_residual_deployable20.pt"),
     )
     parser.add_argument(
         "--stats-out",
-        default=os.path.join(SAVE_DIR, "h1_arm_tier1_enriched_v4_stats.json"),
+        default=os.path.join(SAVE_DIR, "h1_arm_enriched_residual_deployable20_stats.json"),
     )
     parser.add_argument(
         "--residual-target",
+        default=True,
         action="store_true",
         help=(
             "Train target = tau - (KP_FACTORY*pe - KD_FACTORY*v). Pair with "
             "pd_plus_gru:true deploy at kp=60/kd=1.5 so runtime sum equals tau."
         ),
+    )
+    parser.add_argument(
+        "--full-torque-target",
+        dest="residual_target",
+        action="store_false",
+        help="Train against full measured torque instead of the default PD residual target.",
     )
     parser.add_argument(
         "--joint-loss-weights",
@@ -267,8 +275,10 @@ def main() -> None:
         ),
     )
     args = parser.parse_args()
-
-    os.makedirs(SAVE_DIR, exist_ok=True)
+    args.out = os.path.abspath(os.path.expanduser(args.out))
+    args.stats_out = os.path.abspath(os.path.expanduser(args.stats_out))
+    Path(args.out).parent.mkdir(parents=True, exist_ok=True)
+    Path(args.stats_out).parent.mkdir(parents=True, exist_ok=True)
 
     train_pairs = load_split_motions(args.sage_root, args.split_json, role="train")
     val_pairs = load_split_motions(args.sage_root, args.split_json, role="val")
@@ -278,18 +288,24 @@ def main() -> None:
     if tau_sim_root is not None and not os.path.isdir(tau_sim_root):
         raise FileNotFoundError(f"--tau-sim-root not a directory: {tau_sim_root}")
 
-    bias_fn = make_bias_provider(
-        args.model_xml,
-        args.joint_names,
-        args.qfrc_bias_root,
-        save_cache=args.save_qfrc_cache,
-        recompute=args.recompute_qfrc,
-    )
-    if args.model_xml:
-        mode = "recompute (ignore cache)" if args.recompute_qfrc else "cache if present, else compute"
-        print(f"qfrc_bias: {mode} via {args.model_xml}")
+    input_size = H1_DEPLOYABLE_INPUT_SIZE
+    bias_fn = None
+    if args.feature_layout == H1_LEGACY_FEATURE_LAYOUT:
+        input_size = H1_LEGACY_INPUT_SIZE
+        bias_fn = make_bias_provider(
+            args.model_xml,
+            args.joint_names,
+            args.qfrc_bias_root,
+            save_cache=args.save_qfrc_cache,
+            recompute=args.recompute_qfrc,
+        )
+        if args.model_xml:
+            mode = "recompute (ignore cache)" if args.recompute_qfrc else "cache if present, else compute"
+            print(f"qfrc_bias: {mode} via {args.model_xml}")
+        else:
+            print(f"qfrc_bias: load matching legacy caches from {args.qfrc_bias_root}")
     else:
-        print(f"qfrc_bias: load from {args.qfrc_bias_root} (no --model-xml; compute disabled)")
+        print(f"qfrc_bias: omitted by {H1_DEPLOYABLE_FEATURE_LAYOUT} layout")
 
     Xtr, Ytr = build_windowed(
         train_pairs,
@@ -300,6 +316,7 @@ def main() -> None:
         args.kd_factory,
         args.tau_clip,
         tau_sim_root=tau_sim_root,
+        feature_layout=args.feature_layout,
     )
     Xva, Yva = build_windowed(
         val_pairs,
@@ -310,6 +327,7 @@ def main() -> None:
         args.kd_factory,
         args.tau_clip,
         tau_sim_root=tau_sim_root,
+        feature_layout=args.feature_layout,
     )
     if args.tau_clip is not None:
         print(f"[tau-clip] real τ clipped to ±{args.tau_clip} Nm before residual computation")
@@ -322,16 +340,16 @@ def main() -> None:
         )
     elif args.residual_target:
         print("[residual] target = tau - sysid_pd_hint (deploy with pd_plus_gru:true)")
-    print(f"Train windows: {Xtr.shape}, Val windows: {Xva.shape}, input_size={INPUT_SIZE}")
+    print(f"Train windows: {Xtr.shape}, Val windows: {Xva.shape}, input_size={input_size}")
 
-    norm_stats = fit_stats(Xtr.reshape(-1, INPUT_SIZE))
+    norm_stats = fit_stats(Xtr.reshape(-1, input_size))
     print(f"Norm stats: std range [{norm_stats['std'].min():.3f}, {norm_stats['std'].max():.3f}]")
 
     Xtr_n = (Xtr - norm_stats["mean"]) / norm_stats["std"]
     Xva_n = (Xva - norm_stats["mean"]) / norm_stats["std"]
 
     gru = ForceResidualGRU(
-        input_size=INPUT_SIZE,
+        input_size=input_size,
         hidden_size=HIDDEN_SIZE,
         num_layers=NUM_LAYERS,
         num_joints=N_JOINTS,
@@ -391,11 +409,25 @@ def main() -> None:
 
         if va < best_val:
             best_val = va
+            metadata = None
+            if args.feature_layout == H1_DEPLOYABLE_FEATURE_LAYOUT and args.residual_target:
+                metadata = make_h1_deployable_metadata(
+                    hidden_size=HIDDEN_SIZE,
+                    num_layers=NUM_LAYERS,
+                    force_bound=args.force_bound,
+                    kp=args.kp_factory,
+                    kd=args.kd_factory,
+                )
             torch.save(
-                {"model": gru.state_dict(), "epoch": epoch, "val_loss": va},
+                {
+                    "model": gru.state_dict(),
+                    "epoch": epoch,
+                    "val_loss": va,
+                    "metadata": metadata,
+                },
                 args.out,
             )
-            save_stats(norm_stats, args.stats_out)
+            save_stats(norm_stats, args.stats_out, metadata=metadata)
 
     print(f"\nEnriched warm start done. Best val MSE: {best_val:.4f}. Saved to {args.out}")
 

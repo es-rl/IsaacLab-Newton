@@ -526,16 +526,20 @@ MuJoCo required; runs on any machine with PyTorch and a GPU.
 Both use the same architecture (`TorqueGRU`: GRU + linear head, 3 inputs -> 1 output),
 stateful TBPTT training, and Optuna hyperparameter search.
 
-**Enriched (24-feature) — reference implementations.** `train_gru_enriched_g1.py` and
-`train_gru_enriched_h1.py` are the exact trainers that produced the G1 full-torque
-and H1 PD-residual checkpoints. They share a 24-feature layout
-(`[q, position_error, velocity, PD_hint, qfrc_bias, prev_torque]` × 4 joints) and the
-`ForceResidualGRU` model. Their code is self-contained, but they require the
-original motion datasets plus precomputed `<motion>_qfrc_bias.npy` feature caches
-(not included), so they are kept for provenance/comparison and cannot be retrained
-from this repo alone. Selecting the resulting checkpoints at deploy time uses the
-existing `full_torque_enriched` and `hybrid_residual` model types in the run-config
-`actuator:` section (see the sim2real README).
+**Enriched multi-joint models.** `train_gru_enriched_g1.py` keeps the original
+24-feature full-torque G1 contract
+(`[q, position_error, velocity, PD_hint, qfrc_bias, prev_torque]` × 4 joints).
+`train_gru_enriched_h1.py` defaults to a deployable 20-feature residual contract
+that omits `qfrc_bias`, keeps the implicit PD actuator active, and feeds the
+previous applied total torque back into the GRU. Both use `ForceResidualGRU`; the
+runtime infers recurrent dimensions from the checkpoint rather than assuming a
+hidden width. Train H1 from the original motion dataset, then select it with the
+`enriched_residual` model type and
+`input/run_configs/h1/h1_enriched_residual.yaml`. The stats sidecar carries the
+feature layout, joint order, PD gains, target definition, and recommended residual
+scale so incompatible artifacts fail before simulation. See
+[`TRAINING_SCRIPTS.md`](train_model/TRAINING_SCRIPTS.md) for exact commands and the
+legacy 24-input H1 option.
 
 ### Standard GRU
 

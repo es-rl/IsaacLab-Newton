@@ -1,7 +1,13 @@
+# Copyright (c) 2022-2026, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
 """Run SAGE-compatible joint motion benchmark under Newton physics.
 
 Paths for motion data, real data, and output can be set in the run config
-(input/run_configs/<robot>.yaml) or overridden via CLI arguments.
+(input/run_configs/<robot>/<robot>.yaml), selected with `--run-config`, or
+overridden via CLI arguments.
 
 Usage (paths from run config):
     python scripts/sim2real_gap/run_benchmark.py --robot-name h1 --headless
@@ -41,6 +47,12 @@ from isaaclab.app import AppLauncher
 parser = argparse.ArgumentParser(description="SAGE joint motion benchmark (Newton backend)")
 parser.add_argument("--robot-name", type=str, default="h1", help="Robot name (default: h1)")
 parser.add_argument(
+    "--run-config",
+    type=str,
+    default=None,
+    help="Optional explicit run-config YAML path; otherwise load by --robot-name.",
+)
+parser.add_argument(
     "--motion-files",
     type=str,
     default=None,
@@ -62,7 +74,9 @@ parser.add_argument(
 parser.add_argument("--valid-joints-file", type=str, default=None, help="Path to valid joints file")
 parser.add_argument("--output-folder", type=str, default=None, help="Path to output folder (default: from run config)")
 parser.add_argument("--fix-root", action="store_true", default=True, help="Fix root joint (default: True)")
-parser.add_argument("--num-envs", type=int, default=None, help="Number of parallel envs (default: matches motion count)")
+parser.add_argument(
+    "--num-envs", type=int, default=None, help="Number of parallel envs (default: matches motion count)"
+)
 parser.add_argument("--physics-freq", type=int, default=200, help="Physics timestep frequency (Hz)")
 parser.add_argument("--render-freq", type=int, default=200, help="Render timestep frequency (Hz)")
 parser.add_argument("--control-freq", type=int, default=None, help="Control frequency (Hz)")
@@ -90,7 +104,7 @@ AppLauncher.add_app_launcher_args(parser)
 args = parser.parse_args()
 
 # Load per-robot run config; CLI args override config values
-_run_cfg = load_run_cfg(args.robot_name)
+_run_cfg = load_run_cfg(args.robot_name, args.run_config)
 _sim_cfg = _run_cfg.get("simulation", {})
 _bench_cfg = _run_cfg.get("benchmark", {})
 
@@ -149,10 +163,8 @@ if _saved_display is not None and "DISPLAY" not in os.environ:
     os.environ["DISPLAY"] = _saved_display
 
 # Now safe to import simulation-dependent modules
-from sage.simulation import get_motion_files, get_motion_name, log_message  # noqa: E402
-
 from newton_benchmark import NewtonJointMotionBenchmark  # noqa: E402
-
+from sage.simulation import get_motion_files, get_motion_name, log_message  # noqa: E402
 
 
 def _write_run_summary(output_folder, robot_name, motion_source, run_cfg, args):
@@ -178,7 +190,7 @@ def _write_run_summary(output_folder, robot_name, motion_source, run_cfg, args):
         yaml_file = act_cfg.get("yaml_file")
         if yaml_file:
             actuator_info["yaml_file"] = yaml_file
-            try:
+            try:  # noqa: SIM105
                 actuator_info["parameters"] = load_actuator_params(yaml_file)
             except Exception:
                 pass
@@ -186,7 +198,7 @@ def _write_run_summary(output_folder, robot_name, motion_source, run_cfg, args):
         yaml_file = act_cfg.get("yaml_file")
         if yaml_file:
             actuator_info["yaml_file"] = yaml_file
-            try:
+            try:  # noqa: SIM105
                 actuator_info["parameters"] = load_actuator_params(yaml_file)
             except Exception:
                 pass
@@ -201,9 +213,7 @@ def _write_run_summary(output_folder, robot_name, motion_source, run_cfg, args):
     elif mt == "lstm_perjoint":
         network_files = act_cfg.get("network_files", {})
         if network_files:
-            actuator_info["network_files"] = {
-                jt: os.path.basename(f) for jt, f in network_files.items()
-            }
+            actuator_info["network_files"] = {jt: os.path.basename(f) for jt, f in network_files.items()}
 
     summary = {
         "run_timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -295,7 +305,6 @@ def prepare_motor_csv_data(data_dir, output_folder, robot_name, motion_source="c
     Returns list of (motion_file_path, motion_name, is_temp) tuples.
     """
     import numpy as np
-
     from convert_h1_chirp_to_csv import (
         JOINT_MAP,
         find_motor_csvs,
@@ -357,10 +366,10 @@ def prepare_motor_csv_data(data_dir, output_folder, robot_name, motion_source="c
                         all_state_rows.append((time_s[k], state_pos, state_vel, state_torque))
 
                     write_sage_output(motion_real_dir, all_cmd_rows, all_state_rows, joint_order=robot_joints)
-                    log_message(f"  Converted {motion_name}: {len(time_s)} samples ({1/dt:.0f}Hz)")
+                    log_message(f"  Converted {motion_name}: {len(time_s)} samples ({1 / dt:.0f}Hz)")
 
                 # Create temp motion file for sim playback (bare CSV of commanded positions)
-                tmp = tempfile.NamedTemporaryFile(
+                tmp = tempfile.NamedTemporaryFile(  # noqa: SIM115
                     mode="w", suffix=".txt", delete=False, prefix=f"motion_{motion_name}_"
                 )
                 tmp.write(",".join(robot_joints) + "\n")
@@ -394,11 +403,11 @@ def control_csv_to_motion_file(control_csv_path, joint_list_path=None):
 
     if not is_sage_format:
         # Bare CSV format — already a valid motion file (no embedded timestamps)
-        log_message(f"Control CSV is bare format, using directly as motion file")
+        log_message("Control CSV is bare format, using directly as motion file")
         return control_csv_path, None
 
     # SAGE format — extract positions and convert to bare CSV
-    log_message(f"Control CSV is SAGE format, converting to motion file...")
+    log_message("Control CSV is SAGE format, converting to motion file...")
 
     # Get joint names from joint_list.txt if available
     joint_names = None
@@ -448,11 +457,15 @@ def control_csv_to_motion_file(control_csv_path, joint_list_path=None):
         if median_dt_us > 0:
             detected_freq = round(1e6 / median_dt_us, 1)
             duration_s = (timestamps[-1] - timestamps[0]) / 1e6
-            log_message(f"Detected control frequency: {detected_freq:.1f} Hz "
-                        f"(median dt={median_dt_us:.0f} us, duration={duration_s:.1f}s)")
+            log_message(
+                f"Detected control frequency: {detected_freq:.1f} Hz "
+                f"(median dt={median_dt_us:.0f} us, duration={duration_s:.1f}s)"
+            )
 
     # Write temporary motion file
-    tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False, prefix="motion_")
+    tmp = tempfile.NamedTemporaryFile(  # noqa: SIM115
+        mode="w", suffix=".txt", delete=False, prefix="motion_"
+    )
     tmp.write(",".join(joint_names) + "\n")
     for positions in rows:
         tmp.write(",".join(f"{v}" for v in positions) + "\n")
@@ -494,9 +507,7 @@ def _convert_parquets_to_motor_csv(parquet_dir, joint_name="elbow"):
     """
     from convert_benchtop_parquet import convert_parquet_to_motor_csv
 
-    parquets = sorted(
-        f for f in os.listdir(parquet_dir) if f.endswith(".parquet")
-    )
+    parquets = sorted(f for f in os.listdir(parquet_dir) if f.endswith(".parquet"))
     log_message(f"Auto-converting {len(parquets)} parquet files to motor CSVs")
     for fname in parquets:
         path = os.path.join(parquet_dir, fname)
@@ -527,6 +538,7 @@ def _run_motions(benchmark, motions, temp_files):
         except Exception as e:
             log_message(f"Batch execution failed: {e}")
             import traceback
+
             traceback.print_exc()
             log_message("Falling back to sequential execution...")
             for motion_file, motion_name in motions:
@@ -537,6 +549,7 @@ def _run_motions(benchmark, motions, temp_files):
                 except Exception as e2:
                     log_message(f"Error processing {motion_name}: {e2}")
                     import traceback
+
                     traceback.print_exc()
     else:
         # Sequential execution
@@ -548,6 +561,7 @@ def _run_motions(benchmark, motions, temp_files):
             except Exception as e:
                 log_message(f"Error processing {motion_name}: {str(e)}")
                 import traceback
+
                 traceback.print_exc()
                 continue
 
@@ -557,7 +571,7 @@ def _run_motions(benchmark, motions, temp_files):
             os.unlink(motion_file)
 
 
-def main():
+def main():  # noqa: C901
     if args.real_control_csv and args.motion_files:
         raise ValueError("Specify either --motion-files or --real-control-csv, not both")
     if not args.real_control_csv and not args.motion_files:
@@ -592,7 +606,7 @@ def main():
 
     elif os.path.isfile(args.motion_files) and args.motion_files.endswith("_motor.csv"):
         # Single motor CSV file — treat its parent directory as the source dir
-        log_message(f"Detected single motor CSV — auto-converting to SAGE format")
+        log_message("Detected single motor CSV — auto-converting to SAGE format")
         prepared = prepare_motor_csv_data(
             os.path.dirname(args.motion_files), args.output_folder, args.robot_name, args.motion_source
         )

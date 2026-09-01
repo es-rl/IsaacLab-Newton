@@ -1,0 +1,115 @@
+# Copyright (c) 2022-2026, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
+# H1 deployable enriched residual GRU runtime configuration
+# CLI arguments override values set here.
+
+simulation:
+  physics_freq: 500         # Hz
+  control_freq: 500         # Hz
+  render_freq: 500          # Hz
+  integrator: implicitfast  # Newton solver integrator
+  solver_iterations: 10
+
+
+
+   # Newton solver iterations
+  ls_iterations: 10         # Newton line-search iterations
+
+#-------------------------------------------------------------------------------------
+benchmark:
+  fix_root: true
+  buffer_time: 2.0           # seconds — settle before motion playback
+  motor_lag_ms: null         # null = read from actuator YAML
+  kp: null                   # null = use actuator YAML defaults
+  kd: null
+
+  # Motion data — specify ONE of motion_files or real_control_csv (not both)
+  motion_files: input/motion_files/h1/arm_march2026/elbow   # directory of motor CSVs (auto-converted) or path to SAGE motion file
+  # real_control_csv: h1/arm_march2026/all_motors_moving/Chirps/C03_f0_1-0_5_a0_20_motor.csv         # path to real robot control.csv for replay
+  original_control_freq: null                                                                        # Hz — auto-detected from CSV timestamps if null
+  motion_name: arm_march2026                                                                         # motion name for output directory
+
+  # Output paths
+  output_folder: output/sim2real_benchmark   # benchmark + analysis result folder
+
+#-------------------------------------------------------------------------------------
+analysis:
+  output_dir: output/sim2real_analysis       # analysis plots and metrics
+  sample_dt: 0.005                       # seconds — comparison timestep
+  motion_names: "EC01_elbow_chirp"
+  distributional_metrics_file: distributional_metrics.csv
+  mmd_num_features: 256
+  mmd_seed: 0
+  mmd_chunk_size: 1024
+#"*elbow*"    # specific motions to analyze (default: all). Also accepts comma-separated string.
+
+#-------------------------------------------------------------------------------------
+# Actuator model for benchmark arm joints.
+# model_type: implicit | dcmotor | lstm | lstm_perjoint | fmu | enriched_residual
+# yaml_file and network_file/fmu_path paths are relative to input/actuator_models/
+# actuator:
+#   model_type: implicit
+#   yaml_file: h1/h1_arm_sysid_implicit.yaml
+  # yaml_file: h1/h1_arm_implicit.yaml
+
+  # --- For dcmotor: ---
+# actuator:
+  # model_type: dcmotor
+  # yaml_file: h1/h1_arm_dcmotor.yaml
+  #
+  # --- For single LSTM/GRU (one model for all arm joints): ---
+# actuator:
+  # model_type: lstm
+  # network_file: h1/gru_fullarm_elbow_stateful_best.pt
+  #
+  # --- For per-joint LSTM/GRU (separate model per joint type, L/R share): ---
+# actuator:
+  # model_type: lstm_perjoint
+  # network_files:
+  #   shoulder_pitch: h1/gru_shoulder_pitch_stateful_best.pt
+  #   shoulder_roll: h1/gru_shoulder_pitch_stateful_best.pt
+  #   shoulder_yaw: h1/gru_shoulder_pitch_stateful_best.pt
+  #   elbow: h1/gru_fullarm_elbow_stateful_best.pt
+  #
+  # --- For FMU hybrid model (Ansys Twin Builder, ModelExchange): ---
+# actuator:
+  # model_type: fmu
+  # yaml_file: h1/h1_arm_implicit.yaml           # PD gains for torque_pred input
+  # fmu_path: h1/actuator_single_hybrid           # FMU directory or .fmu archive
+  # fmu_step_size: 0.002                          # should match physics dt
+  #
+  # --- For FMU hybrid model (CoSimulation): ---
+# actuator:
+#   model_type: fmu
+#   yaml_file: h1/h1_arm_implicit.yaml           # PD gains for torque_pred input
+#   fmu_path: h1/nvidia-motor.fmu                # CoSimulation FMU (.fmu archive)
+#   fmu_step_size: 0.002                          # should match physics dt
+
+# Train the matching artifacts with train_gru_enriched_h1.py (deployable20)
+# and copy them into input/actuator_models/h1 before running this config.
+actuator:
+  model_type: enriched_residual
+  yaml_file: h1/h1_arm_implicit.yaml
+  network_file: h1/h1_arm_enriched_residual_deployable20_script.pt
+  stats_file: h1/h1_arm_enriched_residual_deployable20_stats.json
+  residual_scale: 0.33
+
+#-------------------------------------------------------------------------------------
+sysid:
+  output_dir: elbow
+  bounds_yaml: h1/h1_arms_sysid_bounds.yaml                    # path relative to input/run_configs/
+  real_data_dir: input/sysid_data/h1/arm_march2026/elbow       # motor CSV dir (auto-converted) or SAGE dir
+  joints: [elbow]
+  #[elbow, shoulder_pitch, shoulder_roll, shoulder_yaw]        # "full" = all joint types, or list: [elbow, shoulder_pitch]
+  num_envs: 64
+  max_iter: 200
+  sigma: 0.5
+  epsilon: 0.01
+  buffer_time: 2.0                                             # seconds — settle before replay
+  objective: mse                                               # mse | wasserstein | mmd
+  mmd_num_features: 256
+  mmd_seed: 0
+  mmd_chunk_size: 1024
